@@ -1,0 +1,9 @@
+{
+  "commit_message_template": {
+    "subject": "<type>: <intent>",
+    "body": [
+      "Why this change is needed.",
+      "Any important constraint, trade-off, or review note."
+    ]
+  }
+}
