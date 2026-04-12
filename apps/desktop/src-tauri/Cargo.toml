@@ -1,0 +1,37 @@
+[package]
+name = "talkiwi-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["whisper", "openai"]
+whisper = ["talkiwi-asr/whisper"]
+download = ["talkiwi-asr/download"]
+openai = ["talkiwi-asr/openai"]
+
+[dependencies]
+talkiwi-core = { path = "../../../crates/talkiwi-core" }
+talkiwi-asr = { path = "../../../crates/talkiwi-asr" }
+talkiwi-track = { path = "../../../crates/talkiwi-track" }
+talkiwi-capture = { path = "../../../crates/talkiwi-capture" }
+talkiwi-engine = { path = "../../../crates/talkiwi-engine" }
+talkiwi-db = { path = "../../../crates/talkiwi-db" }
+tauri = { version = "2", features = ["test", "macos-private-api"] }
+tauri-build = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+rusqlite = { version = "0.31", features = ["bundled"] }
+xcap = "0.9.4"
+image = "=0.25.5"
+window-vibrancy = "0.5"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tokio = { workspace = true }

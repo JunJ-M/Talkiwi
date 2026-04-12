@@ -1,0 +1,19 @@
+[package]
+name = "talkiwi-capture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+talkiwi-core = { path = "../talkiwi-core" }
+tokio = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+mime_guess = "2"
+clipboard-rs = "0.2"
+xcap = "0.9.4"
+active-win-pos-rs = "0.10.0"
+
+[dev-dependencies]
+tempfile = "3"
