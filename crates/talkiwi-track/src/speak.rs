@@ -32,6 +32,17 @@ pub struct SpeakTrack {
     wav_handle: Option<tokio::task::JoinHandle<Option<PathBuf>>>,
 }
 
+fn apply_input_gain(samples: &mut [f32], gain_db: f32) {
+    if gain_db.abs() < f32::EPSILON {
+        return;
+    }
+
+    let gain = 10_f32.powf(gain_db / 20.0);
+    for sample in samples {
+        *sample = (*sample * gain).clamp(-1.0, 1.0);
+    }
+}
+
 impl SpeakTrack {
     /// Create a new SpeakTrack with an audio source.
     pub fn new(audio_source: Box<dyn AudioSource>) -> Self {
@@ -61,6 +72,7 @@ impl SpeakTrack {
         event_tx: mpsc::Sender<SpeakSegment>,
         asr_provider: Box<dyn AsrProvider>,
         audio_dir: Option<PathBuf>,
+        input_gain_db: f32,
     ) -> anyhow::Result<()> {
         self.event_tx = Some(event_tx.clone());
 
@@ -88,7 +100,9 @@ impl SpeakTrack {
                 }
             });
 
-            while let Some(chunk) = tee_rx.recv().await {
+            while let Some(mut chunk) = tee_rx.recv().await {
+                apply_input_gain(&mut chunk.samples, input_gain_db);
+
                 // Write to WAV file (best-effort — don't fail the pipeline)
                 if let Some(ref mut writer) = wav_writer {
                     if let Err(e) = writer.write_chunk(&chunk.samples) {
@@ -271,6 +285,15 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn input_gain_scales_and_clamps_samples() {
+        let mut samples = vec![0.1, -0.1, 0.7];
+        apply_input_gain(&mut samples, 12.0);
+        assert!(samples[0] > 0.39 && samples[0] < 0.41);
+        assert!(samples[1] < -0.39 && samples[1] > -0.41);
+        assert_eq!(samples[2], 1.0);
+    }
+
     #[tokio::test]
     async fn speak_track_start_produces_segments() {
         let chunks = make_test_chunks(3);
@@ -280,7 +303,7 @@ mod tests {
 
         let (event_tx, mut event_rx) = mpsc::channel(16);
         track
-            .start(event_tx, Box::new(MockAsrProvider), None)
+            .start(event_tx, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -313,7 +336,7 @@ mod tests {
 
         let (event_tx, _rx) = mpsc::channel(16);
         track
-            .start(event_tx, Box::new(MockAsrProvider), None)
+            .start(event_tx, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -331,7 +354,7 @@ mod tests {
 
         let (event_tx, mut _rx) = mpsc::channel(16);
         track
-            .start(event_tx, Box::new(MockAsrProvider), None)
+            .start(event_tx, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -356,6 +379,7 @@ mod tests {
                 event_tx,
                 Box::new(MockAsrProvider),
                 Some(dir.path().to_path_buf()),
+                0.0,
             )
             .await
             .unwrap();

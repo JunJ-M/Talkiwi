@@ -16,13 +16,19 @@ pub async fn session_start(state: State<'_, AppState>) -> Result<String, String>
 
     // Create ASR provider from config
     let asr_provider = crate::init_asr_provider_from_state(&state).map_err(|e| e.to_string())?;
+    let input_gain_db = state
+        .config
+        .lock()
+        .map_err(|e| format!("config lock poisoned: {e}"))?
+        .asr
+        .input_gain_db;
 
     // Pass output_dir for WAV recording
     let output_dir = Some(state.output_dir.clone());
 
     let session_id = state
         .session_manager
-        .start(speak_tx, action_tx, asr_provider, output_dir)
+        .start(speak_tx, action_tx, asr_provider, output_dir, input_gain_db)
         .await
         .map_err(|e| e.to_string())?;
 

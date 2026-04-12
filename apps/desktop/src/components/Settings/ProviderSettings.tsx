@@ -6,6 +6,7 @@ import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 
 type DraftState = {
+  active_provider: string;
   whisper_model_size: string;
   language: string;
   beam_size: number;
@@ -16,12 +17,15 @@ type DraftState = {
   vad_silence_timeout_ms: number;
   vad_min_speech_duration_ms: number;
   max_segment_ms: number;
+  input_gain_db: number;
+  cloud_api_key: string;
   ollama_url: string;
   ollama_model: string;
 };
 
 function toDraft(config: AppConfig): DraftState {
   return {
+    active_provider: config.asr.active_provider,
     whisper_model_size: config.asr.whisper_model_size ?? "small",
     language: config.asr.language ?? "",
     beam_size: config.asr.beam_size,
@@ -32,6 +36,8 @@ function toDraft(config: AppConfig): DraftState {
     vad_silence_timeout_ms: config.asr.vad_silence_timeout_ms,
     vad_min_speech_duration_ms: config.asr.vad_min_speech_duration_ms,
     max_segment_ms: config.asr.max_segment_ms,
+    input_gain_db: config.asr.input_gain_db,
+    cloud_api_key: config.asr.cloud_api_key ?? "",
     ollama_url: config.intent.ollama_url,
     ollama_model: config.intent.ollama_model,
   };
@@ -50,6 +56,7 @@ function applyChinesePreset(draft: DraftState): DraftState {
     vad_silence_timeout_ms: 800,
     vad_min_speech_duration_ms: 300,
     max_segment_ms: 15000,
+    input_gain_db: 8,
   };
 }
 
@@ -109,11 +116,18 @@ export function ProviderSettings() {
     return <div className="empty-state"><span>Loading config...</span></div>;
   }
 
+  const isCloud = draft.active_provider === "openai-whisper";
+
   const save = async () => {
     await updateMany([
+      { path: "asr.active_provider", value: draft.active_provider },
       { path: "asr.whisper_model_size", value: draft.whisper_model_size },
       { path: "asr.language", value: draft.language.trim() || null },
       { path: "asr.beam_size", value: Math.max(1, draft.beam_size) },
+      {
+        path: "asr.cloud_api_key",
+        value: draft.cloud_api_key.trim() || null,
+      },
       {
         path: "asr.condition_on_previous_text",
         value: draft.condition_on_previous_text,
@@ -138,6 +152,10 @@ export function ProviderSettings() {
       {
         path: "asr.max_segment_ms",
         value: Math.max(1000, draft.max_segment_ms),
+      },
+      {
+        path: "asr.input_gain_db",
+        value: Math.min(24, Math.max(-12, draft.input_gain_db)),
       },
       { path: "intent.ollama_url", value: draft.ollama_url.trim() },
       { path: "intent.ollama_model", value: draft.ollama_model.trim() },
@@ -169,7 +187,7 @@ export function ProviderSettings() {
 
       <div className="settings-note">
         社区成熟实现通常会显式指定 `language`、启用 VAD、使用 `beam_size=5`
-        左右，并给出技术领域 prompt。这里的配置会在下一次录制直接生效。
+        左右，并给出技术领域 prompt；对低电平麦克风，还会提供输入增益或预处理选项。这里的配置会在下一次录制直接生效。
       </div>
 
       <div className="settings-subsection">
@@ -178,13 +196,38 @@ export function ProviderSettings() {
         <div className="settings-grid">
           <label className="settings-field">
             <span className="settings-row-label">ASR Provider</span>
-            <input
+            <select
               className="settings-input"
-              value={config.asr.active_provider}
-              disabled
-            />
+              value={draft.active_provider}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev ? { ...prev, active_provider: e.target.value } : prev,
+                )
+              }
+            >
+              <option value="whisper-local">Whisper Local (whisper.cpp)</option>
+              <option value="openai-whisper">OpenAI Whisper API</option>
+            </select>
           </label>
 
+          {isCloud && (
+            <label className="settings-field">
+              <span className="settings-row-label">API Key</span>
+              <input
+                className="settings-input"
+                type="password"
+                value={draft.cloud_api_key}
+                onChange={(e) =>
+                  setDraft((prev) =>
+                    prev ? { ...prev, cloud_api_key: e.target.value } : prev,
+                  )
+                }
+                placeholder="sk-..."
+              />
+            </label>
+          )}
+
+          {!isCloud && (
           <label className="settings-field">
             <span className="settings-row-label">模型尺寸</span>
             <select
@@ -203,6 +246,7 @@ export function ProviderSettings() {
               <option value="large-v3">large-v3</option>
             </select>
           </label>
+          )}
 
           <label className="settings-field">
             <span className="settings-row-label">语言提示</span>
@@ -218,6 +262,7 @@ export function ProviderSettings() {
             />
           </label>
 
+          {!isCloud && (
           <label className="settings-field">
             <span className="settings-row-label">Beam Size</span>
             <input
@@ -235,7 +280,9 @@ export function ProviderSettings() {
               }
             />
           </label>
+          )}
 
+          {!isCloud && (
           <label className="settings-field settings-field-checkbox">
             <span className="settings-row-label">保留前文上下文</span>
             <input
@@ -253,6 +300,7 @@ export function ProviderSettings() {
               }
             />
           </label>
+          )}
 
           <label className="settings-field settings-field-checkbox">
             <span className="settings-row-label">启用 VAD 分段</span>
@@ -348,6 +396,28 @@ export function ProviderSettings() {
               }
             />
           </label>
+
+          <label className="settings-field">
+            <span className="settings-row-label">输入增益（dB）</span>
+            <input
+              className="settings-input"
+              type="number"
+              min={-12}
+              max={24}
+              step="1"
+              value={draft.input_gain_db}
+              onChange={(e) =>
+                setDraft((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        input_gain_db: Number(e.target.value) || 0,
+                      }
+                    : prev,
+                )
+              }
+            />
+          </label>
         </div>
 
         <label className="settings-field">
@@ -365,6 +435,7 @@ export function ProviderSettings() {
           />
         </label>
 
+        {!isCloud && (
         <div className="settings-status-card">
           <div className="settings-status-row">
             <span className="settings-row-label">模型状态</span>
@@ -391,6 +462,7 @@ export function ProviderSettings() {
             <div className="settings-status-line">模型状态读取失败：{modelError}</div>
           )}
         </div>
+        )}
       </div>
 
       <div className="settings-subsection">

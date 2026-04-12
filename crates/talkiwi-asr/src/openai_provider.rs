@@ -111,7 +111,7 @@ impl AsrProvider for OpenAiWhisperProvider {
 
             let should_flush = match vad.as_mut() {
                 Some(v) => {
-                    let event = v.process_chunk(&chunk.samples, chunk.offset_ms);
+                    let event = v.process_chunk(&chunk.samples, chunk.offset_ms, chunk.sample_rate);
                     if segment_start_ms.is_none() && v.is_speaking() {
                         segment_start_ms = Some(chunk.offset_ms);
                     }

@@ -64,6 +64,7 @@ impl SessionManager {
         action_tx: mpsc::Sender<ActionEvent>,
         asr_provider: Box<dyn talkiwi_core::traits::asr::AsrProvider>,
         output_dir: Option<PathBuf>,
+        input_gain_db: f32,
     ) -> Result<Uuid, TalkiwiError> {
         // Atomic check-and-set to prevent TOCTOU race
         {
@@ -103,7 +104,7 @@ impl SessionManager {
         {
             let mut speak = self.speak_track.lock().await;
             speak
-                .start(speak_tx, asr_provider, audio_dir)
+                .start(speak_tx, asr_provider, audio_dir, input_gain_db)
                 .await
                 .map_err(|e| TalkiwiError::AsrFailed(e.to_string()))?;
         }
@@ -380,7 +381,7 @@ mod tests {
         let (action_tx, _action_rx) = mpsc::channel(16);
 
         let session_id = sm
-            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None)
+            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -393,13 +394,15 @@ mod tests {
         let sm = make_session_manager();
         let (tx1, _) = mpsc::channel(16);
         let (tx2, _) = mpsc::channel(16);
-        sm.start(tx1, tx2, Box::new(MockAsrProvider), None)
+        sm.start(tx1, tx2, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
         let (tx3, _) = mpsc::channel(16);
         let (tx4, _) = mpsc::channel(16);
-        let result = sm.start(tx3, tx4, Box::new(MockAsrProvider), None).await;
+        let result = sm
+            .start(tx3, tx4, Box::new(MockAsrProvider), None, 0.0)
+            .await;
         assert!(matches!(result, Err(TalkiwiError::AlreadyRecording)));
     }
 
@@ -417,7 +420,7 @@ mod tests {
         let (action_tx, _action_rx) = mpsc::channel(16);
 
         let session_id = sm
-            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None)
+            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -435,7 +438,7 @@ mod tests {
         let (action_tx, mut action_rx) = mpsc::channel(16);
 
         let session_id = sm
-            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None)
+            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -478,7 +481,7 @@ mod tests {
         let (action_tx, _) = mpsc::channel(16);
 
         let session_id = sm
-            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None)
+            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 

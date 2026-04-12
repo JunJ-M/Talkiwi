@@ -11,7 +11,9 @@
 //! requiring whisper.cpp system dependencies.
 
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+#[cfg(feature = "whisper")]
+use tracing::warn;
+use tracing::{debug, info};
 
 use crate::vad::{VadConfig, VoiceActivityDetector};
 use talkiwi_core::config::AsrConfig;
@@ -103,7 +105,7 @@ impl AudioChunkSegmenter {
 
         match self.vad.as_mut() {
             Some(vad) => {
-                let event = vad.process_chunk(&chunk.samples, chunk.offset_ms);
+                let event = vad.process_chunk(&chunk.samples, chunk.offset_ms, chunk.sample_rate);
 
                 if self.current_start_ms.is_none() && vad.is_speaking() {
                     self.current_start_ms = Some(chunk.offset_ms);

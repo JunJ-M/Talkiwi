@@ -39,6 +39,10 @@ fn default_max_segment_ms() -> u64 {
     15_000
 }
 
+fn default_input_gain_db() -> f32 {
+    8.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AsrConfig {
@@ -54,6 +58,7 @@ pub struct AsrConfig {
     pub vad_silence_timeout_ms: u64,
     pub vad_min_speech_duration_ms: u64,
     pub max_segment_ms: u64,
+    pub input_gain_db: f32,
     /// API key for cloud ASR providers (e.g., OpenAI Whisper API).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud_api_key: Option<String>,
@@ -74,6 +79,7 @@ impl Default for AsrConfig {
             vad_silence_timeout_ms: default_vad_silence_timeout_ms(),
             vad_min_speech_duration_ms: default_vad_min_speech_duration_ms(),
             max_segment_ms: default_max_segment_ms(),
+            input_gain_db: default_input_gain_db(),
             cloud_api_key: None,
         }
     }
@@ -188,6 +194,7 @@ mod tests {
         assert_eq!(deserialized.asr.language, Some("zh".to_string()));
         assert_eq!(deserialized.asr.beam_size, 5);
         assert!(deserialized.asr.vad_enabled);
+        assert_eq!(deserialized.asr.input_gain_db, 8.0);
         assert_eq!(deserialized.capture.selection_poll_interval_ms, 200);
         assert_eq!(deserialized.ui.panel_width, 360);
     }
@@ -212,6 +219,7 @@ mod tests {
         assert_eq!(config.asr.language, Some("zh".to_string()));
         assert_eq!(config.asr.beam_size, 5);
         assert!(config.asr.condition_on_previous_text);
+        assert_eq!(config.asr.input_gain_db, 8.0);
         assert!(!config.capture.selection_enabled);
         assert_eq!(config.ui.panel_side, "left");
     }
@@ -225,6 +233,7 @@ mod tests {
         assert_eq!(config.intent.ollama_model, "qwen2.5:7b"); // default
         assert_eq!(config.asr.language, Some("zh".to_string()));
         assert_eq!(config.asr.max_segment_ms, 15_000);
+        assert_eq!(config.asr.input_gain_db, 8.0);
         assert!(config.capture.selection_enabled); // default
         assert_eq!(config.ui.panel_width, 360); // default
     }
@@ -250,5 +259,6 @@ mod tests {
         assert_eq!(config.beam_size, 5);
         assert!(config.vad_enabled);
         assert_eq!(config.max_segment_ms, 15_000);
+        assert_eq!(config.input_gain_db, 8.0);
     }
 }

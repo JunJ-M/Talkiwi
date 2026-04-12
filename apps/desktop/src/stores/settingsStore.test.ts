@@ -23,6 +23,8 @@ const mockConfig = {
     vad_silence_timeout_ms: 800,
     vad_min_speech_duration_ms: 300,
     max_segment_ms: 15000,
+    input_gain_db: 8,
+    cloud_api_key: null,
   },
   intent: {
     active_provider: "ollama",

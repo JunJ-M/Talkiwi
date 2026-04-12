@@ -180,6 +180,8 @@ export interface AppConfig {
     vad_silence_timeout_ms: number;
     vad_min_speech_duration_ms: number;
     max_segment_ms: number;
+    input_gain_db: number;
+    cloud_api_key: string | null;
   };
   intent: {
     active_provider: string;
