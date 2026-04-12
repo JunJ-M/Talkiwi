@@ -16,7 +16,7 @@ talkiwi-track = { path = "../../../crates/talkiwi-track" }
 talkiwi-capture = { path = "../../../crates/talkiwi-capture" }
 talkiwi-engine = { path = "../../../crates/talkiwi-engine" }
 talkiwi-db = { path = "../../../crates/talkiwi-db" }
-tauri = { version = "2", features = ["test", "macos-private-api"] }
+tauri = { version = "2", features = ["test", "macos-private-api", "protocol-asset"] }
 tauri-build = { version = "2", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }

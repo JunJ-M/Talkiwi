@@ -164,7 +164,7 @@ async fn e2e_full_pipeline_mock() {
     let (action_tx, mut action_rx) = mpsc::channel::<ActionEvent>(16);
 
     speak_track
-        .start(speak_tx, Box::new(MockAsrProvider), None)
+        .start(speak_tx, Box::new(MockAsrProvider), None, 0.0)
         .await
         .unwrap();
     action_track.start(action_tx).unwrap();
@@ -288,7 +288,7 @@ async fn e2e_empty_session() {
     let (action_tx, _action_rx) = mpsc::channel(16);
 
     speak_track
-        .start(speak_tx, Box::new(MockAsrProvider), None)
+        .start(speak_tx, Box::new(MockAsrProvider), None, 0.0)
         .await
         .unwrap();
     action_track.start(action_tx).unwrap();
@@ -318,7 +318,7 @@ async fn e2e_only_speech_no_actions() {
 
     let (speak_tx, _rx) = mpsc::channel(16);
     speak_track
-        .start(speak_tx, Box::new(MockAsrProvider), None)
+        .start(speak_tx, Box::new(MockAsrProvider), None, 0.0)
         .await
         .unwrap();
 

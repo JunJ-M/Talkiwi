@@ -63,9 +63,18 @@ impl VoiceActivityDetector {
     /// Process a chunk of audio samples and return any state transition event.
     ///
     /// `chunk_offset_ms` is the timestamp of this chunk relative to session start.
-    pub fn process_chunk(&mut self, samples: &[f32], chunk_offset_ms: u64) -> Option<VadEvent> {
+    /// `sample_rate` is used to account for the full chunk duration when checking
+    /// whether trailing silence has exceeded the configured timeout.
+    pub fn process_chunk(
+        &mut self,
+        samples: &[f32],
+        chunk_offset_ms: u64,
+        sample_rate: u32,
+    ) -> Option<VadEvent> {
         let energy = rms_energy(samples);
         let is_speech = energy > self.config.threshold;
+        let chunk_end_ms =
+            chunk_offset_ms + (samples.len() as u64 * 1000) / sample_rate.max(1) as u64;
 
         match self.state {
             VadState::Silent => {
@@ -93,7 +102,7 @@ impl VoiceActivityDetector {
                     None
                 } else {
                     // Check if silence has lasted long enough
-                    let silence_duration = chunk_offset_ms.saturating_sub(self.silence_start_ms);
+                    let silence_duration = chunk_end_ms.saturating_sub(self.silence_start_ms);
                     if silence_duration >= self.config.silence_timeout_ms {
                         self.state = VadState::Silent;
                         let speech_duration = chunk_offset_ms.saturating_sub(self.speech_start_ms);
@@ -166,12 +175,12 @@ mod tests {
         let mut vad = VoiceActivityDetector::new(VadConfig::default());
 
         // Silent chunk — no event
-        let event = vad.process_chunk(&silence(1600), 0);
+        let event = vad.process_chunk(&silence(1600), 0, 16000);
         assert_eq!(event, None);
         assert!(!vad.is_speaking());
 
         // Loud chunk — SpeechStart
-        let event = vad.process_chunk(&loud_signal(1600, 0.1), 100);
+        let event = vad.process_chunk(&loud_signal(1600, 0.1), 100, 16000);
         assert_eq!(event, Some(VadEvent::SpeechStart { start_ms: 100 }));
         assert!(vad.is_speaking());
     }
@@ -181,15 +190,15 @@ mod tests {
         let mut vad = VoiceActivityDetector::new(VadConfig::default());
 
         // Start speaking
-        vad.process_chunk(&loud_signal(1600, 0.1), 0);
+        vad.process_chunk(&loud_signal(1600, 0.1), 0, 16000);
         assert!(vad.is_speaking());
 
         // Go quiet — enters SilenceWait
-        vad.process_chunk(&silence(1600), 100);
+        vad.process_chunk(&silence(1600), 100, 16000);
         assert!(vad.is_speaking()); // Still "speaking" (in wait)
 
         // Stay quiet past timeout (800ms)
-        let event = vad.process_chunk(&silence(1600), 1000);
+        let event = vad.process_chunk(&silence(1600), 1000, 16000);
         assert_eq!(
             event,
             Some(VadEvent::SpeechEnd {
@@ -210,9 +219,9 @@ mod tests {
         let mut vad = VoiceActivityDetector::new(config);
 
         // Very short burst: speak at 0ms, silence at 50ms, wait until 200ms
-        vad.process_chunk(&loud_signal(1600, 0.1), 0);
-        vad.process_chunk(&silence(1600), 50);
-        let event = vad.process_chunk(&silence(1600), 200);
+        vad.process_chunk(&loud_signal(1600, 0.1), 0, 16000);
+        vad.process_chunk(&silence(1600), 50, 16000);
+        let event = vad.process_chunk(&silence(1600), 200, 16000);
 
         // Duration is 200ms < 300ms min_speech → discarded (None)
         assert_eq!(event, None);
@@ -224,11 +233,11 @@ mod tests {
         let mut vad = VoiceActivityDetector::new(VadConfig::default());
 
         // Start speaking
-        vad.process_chunk(&loud_signal(1600, 0.1), 0);
+        vad.process_chunk(&loud_signal(1600, 0.1), 0, 16000);
 
         // Continue speaking for many chunks
         for i in 1..20 {
-            let event = vad.process_chunk(&loud_signal(1600, 0.1), i * 100);
+            let event = vad.process_chunk(&loud_signal(1600, 0.1), i * 100, 16000);
             assert_eq!(event, None);
             assert!(vad.is_speaking());
         }
@@ -239,19 +248,19 @@ mod tests {
         let mut vad = VoiceActivityDetector::new(VadConfig::default());
 
         // Start speaking
-        vad.process_chunk(&loud_signal(1600, 0.1), 0);
+        vad.process_chunk(&loud_signal(1600, 0.1), 0, 16000);
 
         // Go quiet (enters SilenceWait)
-        vad.process_chunk(&silence(1600), 100);
+        vad.process_chunk(&silence(1600), 100, 16000);
 
         // Before timeout: speak again
-        let event = vad.process_chunk(&loud_signal(1600, 0.1), 400);
+        let event = vad.process_chunk(&loud_signal(1600, 0.1), 400, 16000);
         assert_eq!(event, None); // No SpeechEnd — speech continued
         assert!(vad.is_speaking());
 
         // Now go quiet again and wait past timeout
-        vad.process_chunk(&silence(1600), 500);
-        let event = vad.process_chunk(&silence(1600), 1400);
+        vad.process_chunk(&silence(1600), 500, 16000);
+        let event = vad.process_chunk(&silence(1600), 1400, 16000);
         assert_eq!(
             event,
             Some(VadEvent::SpeechEnd {
