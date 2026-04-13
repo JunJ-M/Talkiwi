@@ -36,17 +36,18 @@ pub struct OpenAiWhisperConfig {
 
 impl OpenAiWhisperConfig {
     pub fn new(api_key: impl Into<String>) -> Self {
+        let defaults = talkiwi_core::config::AsrConfig::default();
         Self {
             api_key: api_key.into(),
             base_url: "https://api.openai.com/v1".to_string(),
             model: "whisper-1".to_string(),
-            language: Some("zh".to_string()),
-            prompt: Some("以下是普通话中文口述，可能包含英文术语。".to_string()),
-            max_segment_ms: 15_000,
-            vad_enabled: true,
-            vad_threshold: 0.02,
-            vad_silence_timeout_ms: 800,
-            vad_min_speech_duration_ms: 300,
+            language: defaults.language,
+            prompt: defaults.initial_prompt,
+            max_segment_ms: defaults.max_segment_ms,
+            vad_enabled: defaults.vad_enabled,
+            vad_threshold: defaults.vad_threshold,
+            vad_silence_timeout_ms: defaults.vad_silence_timeout_ms,
+            vad_min_speech_duration_ms: defaults.vad_min_speech_duration_ms,
         }
     }
 }

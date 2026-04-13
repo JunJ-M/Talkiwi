@@ -1,29 +1,27 @@
 pub mod assembler;
 pub mod ollama_provider;
-pub mod resolver;
 
-pub use talkiwi_core::traits::intent::{IntentProvider, IntentRaw};
+pub use talkiwi_core::traits::intent::{IntentProvider, IntentRaw, RawReference};
 
 use talkiwi_core::event::ActionEvent;
-use talkiwi_core::output::IntentOutput;
+use talkiwi_core::locale::AssemblerLabels;
+use talkiwi_core::output::{IntentOutput, Reference, ReferenceStrategy};
 use talkiwi_core::session::SpeakSegment;
 use uuid::Uuid;
 
 use crate::assembler::assemble;
-use crate::resolver::Resolver;
 
 /// The system prompt template for intent restructuring.
 pub const SYSTEM_PROMPT: &str = include_str!("prompts/system.txt");
 
-/// IntentEngine: 4-step pipeline for intent recognition.
+/// IntentEngine: 3-step pipeline for intent recognition.
 ///
 /// 1. Timeline alignment (via talkiwi_core::timeline)
-/// 2. Reference resolution (Resolver)
-/// 3. LLM intent restructuring (IntentProvider)
-/// 4. Markdown assembly (Assembler)
+/// 2. LLM intent restructuring + reference resolution (IntentProvider)
+/// 3. Markdown assembly (Assembler)
 pub struct IntentEngine {
     provider: Box<dyn IntentProvider>,
-    resolver: Resolver,
+    labels: AssemblerLabels,
     system_prompt: String,
 }
 
@@ -31,12 +29,25 @@ impl IntentEngine {
     pub fn new(provider: Box<dyn IntentProvider>, system_prompt: Option<String>) -> Self {
         Self {
             provider,
-            resolver: Resolver::new(),
+            labels: AssemblerLabels::default(),
             system_prompt: system_prompt.unwrap_or_else(|| SYSTEM_PROMPT.to_string()),
         }
     }
 
-    /// Process segments and events through the full 4-step pipeline.
+    /// Create an IntentEngine with custom assembler labels.
+    pub fn with_labels(
+        provider: Box<dyn IntentProvider>,
+        labels: AssemblerLabels,
+        system_prompt: Option<String>,
+    ) -> Self {
+        Self {
+            provider,
+            labels,
+            system_prompt: system_prompt.unwrap_or_else(|| SYSTEM_PROMPT.to_string()),
+        }
+    }
+
+    /// Process segments and events through the 3-step pipeline.
     pub async fn process(
         &self,
         segments: &[SpeakSegment],
@@ -47,10 +58,7 @@ impl IntentEngine {
         let timeline = talkiwi_core::timeline::align_timeline(segments, events);
         let summary = talkiwi_core::timeline::timeline_to_summary(&timeline);
 
-        // Step 2: Reference resolution
-        let references = self.resolver.resolve(segments, events);
-
-        // Step 3: LLM intent restructuring
+        // Step 2: LLM intent restructuring (includes reference resolution)
         let transcript: String = segments
             .iter()
             .map(|s| s.text.as_str())
@@ -62,11 +70,32 @@ impl IntentEngine {
             .restructure(&transcript, &summary, &self.system_prompt)
             .await?;
 
-        // Step 4: Markdown assembly
-        let output = assemble(&raw, events, &references, session_id);
+        // Step 3: Convert LLM references + assemble markdown
+        let references = convert_raw_references(&raw.references, events);
+        let output = assemble(&raw, events, &references, session_id, &self.labels);
 
         Ok(output)
     }
+}
+
+/// Convert LLM-produced `RawReference`s (index-based) into `Reference`s (ID-based).
+///
+/// Invalid indices are silently skipped — the LLM may hallucinate indices.
+fn convert_raw_references(raw_refs: &[RawReference], events: &[ActionEvent]) -> Vec<Reference> {
+    raw_refs
+        .iter()
+        .filter_map(|raw| {
+            events.get(raw.event_index).map(|event| Reference {
+                spoken_text: raw.spoken_text.clone(),
+                spoken_offset: 0,
+                resolved_event_idx: raw.event_index,
+                resolved_event_id: Some(event.id),
+                confidence: 1.0,
+                strategy: ReferenceStrategy::SemanticSimilarity,
+                user_confirmed: false,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -146,6 +175,11 @@ mod tests {
             constraints: vec!["使用 Rust".to_string()],
             missing_context: vec![],
             restructured_speech: "请帮我重写选中的代码函数".to_string(),
+            references: vec![RawReference {
+                spoken_text: "这段代码".to_string(),
+                event_index: 0,
+                reason: "用户提到代码，关联选中文字事件".to_string(),
+            }],
         }
     }
 
@@ -194,6 +228,7 @@ mod tests {
             constraints: vec![],
             missing_context: vec!["需要更多上下文".to_string()],
             restructured_speech: "分析提供的截图".to_string(),
+            references: vec![],
         };
         let engine = IntentEngine::new(Box::new(MockIntentProvider::new(raw)), None);
 

@@ -1098,3 +1098,147 @@ body {
   font-size: 11px;
   line-height: 1.5;
 }
+
+/* ── Marble Diagram ─────────────────────────────────────────── */
+
+.marble-diagram {
+  position: relative;
+  height: 48px;
+  min-width: 100%;
+  padding: 0 8px;
+}
+
+.marble-diagram--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+
+.marble-line {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: oklch(85% 0 0);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.marble-empty-label {
+  font-size: var(--text-xs);
+  color: oklch(65% 0 0);
+  z-index: 1;
+}
+
+.marble-circle {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--marble-color, oklch(60% 0.05 0));
+  color: oklch(100% 0 0);
+  border: 2px solid oklch(100% 0 0);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+  z-index: 2;
+  box-shadow: 0 1px 3px oklch(0% 0 0 / 0.12);
+}
+
+.marble-circle:hover {
+  transform: translate(-50%, -50%) scale(1.2);
+  box-shadow: 0 2px 8px oklch(0% 0 0 / 0.2);
+}
+
+.marble-circle--active {
+  transform: translate(-50%, -50%) scale(1.25);
+  box-shadow:
+    0 0 0 3px var(--marble-color, oklch(60% 0.05 0)),
+    0 2px 8px oklch(0% 0 0 / 0.2);
+}
+
+.marble-popover {
+  position: absolute;
+  top: calc(50% + 22px);
+  transform: translateX(-50%);
+  background: oklch(100% 0 0);
+  border: 1px solid oklch(90% 0 0);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px oklch(0% 0 0 / 0.12);
+  padding: var(--space-sm) var(--space-md);
+  min-width: 180px;
+  max-width: 280px;
+  z-index: 10;
+  animation: view-enter var(--duration-normal) var(--ease-out);
+}
+
+.marble-popover-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.marble-popover-type {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.marble-popover-time {
+  font-size: var(--text-xs);
+  color: oklch(55% 0 0);
+  font-variant-numeric: tabular-nums;
+}
+
+.marble-popover-detail {
+  font-size: var(--text-xs);
+  color: oklch(40% 0 0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: var(--space-xs);
+}
+
+.marble-popover-hint {
+  font-size: var(--text-xs);
+  color: oklch(50% 0.1 250);
+  font-style: italic;
+  margin-bottom: var(--space-xs);
+}
+
+.marble-popover-remove {
+  font-size: var(--text-xs);
+  color: oklch(55% 0.2 25);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.marble-popover-remove:hover {
+  color: oklch(45% 0.25 25);
+}
+
+/* ── Glass / Vibrancy Utility ───────────────────────────── */
+
+.glass {
+  background: var(--color-glass-bg);
+  backdrop-filter: blur(var(--blur-md));
+  -webkit-backdrop-filter: blur(var(--blur-md));
+  border: 1px solid var(--color-glass-border);
+  box-shadow: var(--shadow-md);
+}

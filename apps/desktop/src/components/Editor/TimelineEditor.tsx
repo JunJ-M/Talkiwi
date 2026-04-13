@@ -1,6 +1,6 @@
 import type { ActionEvent, SpeakSegment } from "../../types";
 import { Waveform } from "./Waveform";
-import { ActionLane } from "./ActionLane";
+import { MarbleDiagram } from "../ui/MarbleDiagram";
 import { TimeRuler } from "./TimeRuler";
 
 interface TimelineEditorProps {
@@ -37,7 +37,7 @@ export function TimelineEditor({
         durationMs={durationMs}
         onRemoveSegment={onRemoveSegment}
       />
-      <ActionLane
+      <MarbleDiagram
         events={events}
         durationMs={durationMs}
         onRemoveEvent={onRemoveEvent}

@@ -20,79 +20,178 @@ impl TimelineEntry {
 
 /// Merge-sort align speak segments and action events by time.
 pub fn align_timeline(segments: &[SpeakSegment], events: &[ActionEvent]) -> Vec<TimelineEntry> {
+    let mut sorted_segments = segments.to_vec();
+    sorted_segments.sort_by_key(|segment| segment.start_ms);
+
+    let mut sorted_events = events.to_vec();
+    sorted_events.sort_by_key(|event| event.session_offset_ms);
+
     let mut result = Vec::with_capacity(segments.len() + events.len());
     let mut si = 0;
     let mut ei = 0;
 
-    while si < segments.len() && ei < events.len() {
-        if segments[si].start_ms <= events[ei].session_offset_ms {
-            result.push(TimelineEntry::Speak(segments[si].clone()));
+    while si < sorted_segments.len() && ei < sorted_events.len() {
+        if sorted_segments[si].start_ms <= sorted_events[ei].session_offset_ms {
+            result.push(TimelineEntry::Speak(sorted_segments[si].clone()));
             si += 1;
         } else {
-            result.push(TimelineEntry::Action(events[ei].clone()));
+            result.push(TimelineEntry::Action(sorted_events[ei].clone()));
             ei += 1;
         }
     }
 
-    while si < segments.len() {
-        result.push(TimelineEntry::Speak(segments[si].clone()));
+    while si < sorted_segments.len() {
+        result.push(TimelineEntry::Speak(sorted_segments[si].clone()));
         si += 1;
     }
 
-    while ei < events.len() {
-        result.push(TimelineEntry::Action(events[ei].clone()));
+    while ei < sorted_events.len() {
+        result.push(TimelineEntry::Action(sorted_events[ei].clone()));
         ei += 1;
     }
 
     result
 }
 
-/// Generate a text summary from a timeline for LLM input.
+/// Generate a structured text summary from a timeline for LLM input.
+///
+/// Output separates speech and events into two sections. Events are numbered
+/// from 0 so the LLM can reference them by index in its `references` output.
 pub fn timeline_to_summary(timeline: &[TimelineEntry]) -> String {
-    let mut lines = Vec::new();
+    let mut speech_lines = Vec::new();
+    let mut event_lines = Vec::new();
+    let mut event_idx: usize = 0;
 
     for entry in timeline {
         match entry {
             TimelineEntry::Speak(s) => {
-                lines.push(format!("[{}-{}ms] SPEAK: {}", s.start_ms, s.end_ms, s.text));
+                speech_lines.push(format!("[{}-{}ms] {}", s.start_ms, s.end_ms, s.text));
             }
             TimelineEntry::Action(a) => {
-                let payload_summary = match &a.payload {
-                    crate::event::ActionPayload::SelectionText { text, app_name, .. } => {
-                        format!("Selected text in {}: \"{}\"", app_name, truncate(text, 100))
-                    }
-                    crate::event::ActionPayload::Screenshot { image_path, .. } => {
-                        format!("Screenshot: {}", image_path)
-                    }
-                    crate::event::ActionPayload::ClipboardChange { text, .. } => {
-                        let preview = text.as_deref().unwrap_or("<non-text>");
-                        format!("Clipboard: \"{}\"", truncate(preview, 100))
-                    }
-                    crate::event::ActionPayload::PageCurrent { title, url, .. } => {
-                        let url_str = url.as_deref().unwrap_or("N/A");
-                        format!("Page: {} ({})", title, url_str)
-                    }
-                    crate::event::ActionPayload::ClickLink { to_url, .. } => {
-                        format!("Navigate to: {}", to_url)
-                    }
-                    crate::event::ActionPayload::FileAttach { file_name, .. } => {
-                        format!("File attached: {}", file_name)
-                    }
-                    crate::event::ActionPayload::Custom(v) => {
-                        format!("Custom: {}", v)
-                    }
-                };
-                lines.push(format!(
-                    "[{}ms] ACTION({}): {}",
-                    a.session_offset_ms,
+                let summary = format_action_summary(&a.payload);
+                event_lines.push(format!(
+                    "[{}] {} @ {}ms — {}",
+                    event_idx,
                     a.action_type.as_str(),
-                    payload_summary
+                    a.session_offset_ms,
+                    summary,
                 ));
+                event_idx += 1;
             }
         }
     }
 
-    lines.join("\n")
+    let mut result = String::new();
+    if !speech_lines.is_empty() {
+        result.push_str("口语转录:\n");
+        result.push_str(&speech_lines.join("\n"));
+    }
+    if !event_lines.is_empty() {
+        if !result.is_empty() {
+            result.push_str("\n\n");
+        }
+        result.push_str("操作事件:\n");
+        result.push_str(&event_lines.join("\n"));
+    }
+    result
+}
+
+/// Bound the timeline summary for LLM input.
+///
+/// Keeps the most recent speech lines within `max_chars`, then appends the
+/// event section if space remains. This preserves recent spoken intent first.
+pub fn timeline_to_summary_bounded(timeline: &[TimelineEntry], max_chars: usize) -> String {
+    let full = timeline_to_summary(timeline);
+    if full.len() <= max_chars {
+        return full;
+    }
+
+    let mut sections = full.split("\n\n");
+    let speech_section = sections.next().unwrap_or_default();
+    let events_section = sections.next().unwrap_or_default();
+
+    let mut speech_lines: Vec<&str> = speech_section.lines().collect();
+    let header = if !speech_lines.is_empty() {
+        speech_lines.remove(0)
+    } else {
+        "口语转录:"
+    };
+
+    let mut kept_speech = Vec::new();
+    let mut budget = max_chars.saturating_sub(header.len() + 1);
+    for line in speech_lines.iter().rev() {
+        let line_cost = line.len() + 1;
+        if line_cost > budget && !kept_speech.is_empty() {
+            break;
+        }
+        if line_cost <= budget {
+            kept_speech.push(*line);
+            budget = budget.saturating_sub(line_cost);
+        }
+    }
+    kept_speech.reverse();
+
+    let mut result = String::new();
+    result.push_str(header);
+    if !kept_speech.is_empty() {
+        result.push('\n');
+        result.push_str(&kept_speech.join("\n"));
+    }
+
+    if !events_section.is_empty() {
+        let separator_cost = 2;
+        if result.len() + separator_cost < max_chars {
+            let remaining = max_chars - result.len() - separator_cost;
+            let mut event_lines: Vec<&str> = events_section.lines().collect();
+            let event_header = if !event_lines.is_empty() {
+                event_lines.remove(0)
+            } else {
+                "操作事件:"
+            };
+            let mut event_text = event_header.to_string();
+            for line in event_lines {
+                if event_text.len() + line.len() + 1 > remaining {
+                    break;
+                }
+                event_text.push('\n');
+                event_text.push_str(line);
+            }
+
+            result.push_str("\n\n");
+            result.push_str(&event_text);
+        }
+    }
+
+    result
+}
+
+/// Format a single action payload into a short summary for the LLM.
+fn format_action_summary(payload: &crate::event::ActionPayload) -> String {
+    match payload {
+        crate::event::ActionPayload::SelectionText { text, app_name, .. } => {
+            format!("Selected text in {}: \"{}\"", app_name, truncate(text, 100))
+        }
+        crate::event::ActionPayload::Screenshot { image_path, .. } => {
+            format!("Screenshot: {}", image_path)
+        }
+        crate::event::ActionPayload::ClipboardChange { text, .. } => {
+            let preview = text.as_deref().unwrap_or("<non-text>");
+            format!("Clipboard: \"{}\"", truncate(preview, 100))
+        }
+        crate::event::ActionPayload::PageCurrent { title, url, .. } => {
+            let url_str = url.as_deref().unwrap_or("N/A");
+            format!("Page: {} ({})", title, url_str)
+        }
+        crate::event::ActionPayload::ClickLink { to_url, .. } => {
+            format!("Navigate to: {}", to_url)
+        }
+        crate::event::ActionPayload::FileAttach { file_name, .. } => {
+            format!("File attached: {}", file_name)
+        }
+        crate::event::ActionPayload::Custom(v) => {
+            format!("Custom: {}", v)
+        }
+    }
 }
 
 /// Truncate a string to at most `max_len` bytes on a char boundary.
@@ -164,6 +263,22 @@ mod tests {
     }
 
     #[test]
+    fn align_timeline_sorts_unsorted_inputs() {
+        let segments = vec![
+            make_segment("world", 2000, 3000),
+            make_segment("hello", 0, 1000),
+        ];
+        let events = vec![
+            make_event(2500, ActionType::Screenshot),
+            make_event(500, ActionType::SelectionText),
+        ];
+
+        let timeline = align_timeline(&segments, &events);
+        let times: Vec<u64> = timeline.iter().map(|e| e.start_ms()).collect();
+        assert_eq!(times, vec![0, 500, 2000, 2500]);
+    }
+
+    #[test]
     fn align_timeline_empty_inputs() {
         let empty_segments: Vec<SpeakSegment> = vec![];
         let empty_events: Vec<ActionEvent> = vec![];
@@ -186,8 +301,8 @@ mod tests {
         let timeline = align_timeline(&segments, &events);
         let summary = timeline_to_summary(&timeline);
 
-        assert!(summary.contains("[0-1000ms] SPEAK: rewrite this"));
-        assert!(summary.contains("[500ms] ACTION(selection.text):"));
+        assert!(summary.contains("口语转录:\n[0-1000ms] rewrite this"));
+        assert!(summary.contains("操作事件:\n[0] selection.text @ 500ms"));
     }
 
     #[test]
@@ -195,5 +310,17 @@ mod tests {
         let long_str = "a".repeat(200);
         assert_eq!(truncate(&long_str, 100).len(), 100);
         assert_eq!(truncate("short", 100), "short");
+    }
+
+    #[test]
+    fn timeline_to_summary_bounded_keeps_recent_speech() {
+        let segments = vec![
+            make_segment("第一句", 0, 1000),
+            make_segment("第二句", 2000, 3000),
+            make_segment("第三句", 4000, 5000),
+        ];
+        let timeline = align_timeline(&segments, &[]);
+        let summary = timeline_to_summary_bounded(&timeline, 32);
+        assert!(summary.contains("第三句"));
     }
 }

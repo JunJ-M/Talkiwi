@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useTimelineStore } from "../../stores/timelineStore";
 import { SpeakTrack } from "./SpeakTrack";
-import { ActionTrack } from "./ActionTrack";
+import { MarbleDiagram } from "../ui/MarbleDiagram";
 
 export function Timeline() {
   const segments = useTimelineStore((s) => s.segments);
@@ -15,6 +15,14 @@ export function Timeline() {
     }
   }, [segments.length, events.length]);
 
+  // Compute duration from segments and events for marble positioning
+  const maxSegmentMs = segments.reduce((max, s) => Math.max(max, s.end_ms), 0);
+  const maxEventMs = events.reduce(
+    (max, e) => Math.max(max, e.session_offset_ms),
+    0,
+  );
+  const durationMs = Math.max(maxSegmentMs, maxEventMs, 1000);
+
   return (
     <div className="timeline">
       <div className="timeline-section">
@@ -23,7 +31,7 @@ export function Timeline() {
       </div>
       <div className="timeline-section">
         <span className="timeline-label">Actions</span>
-        <ActionTrack events={events} />
+        <MarbleDiagram events={events} durationMs={durationMs} />
       </div>
       <div ref={endRef} />
     </div>

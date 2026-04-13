@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <img src="https://raw.githubusercontent.com/JunJ-M/Talkiwi/main/assets/kiwi-sun.png" alt="Talkiwi" width="180">
+    <img src="https://raw.githubusercontent.com/JunJ-M/Talkiwi/main/assets/kiwi-sun.png" alt="Talkiwi" width="380">
   </picture>
 </p>
 
@@ -55,12 +55,12 @@
 
 ### The problem it solves
 
-| Gap | Example |
-|-----|---------|
-| Speech without context | You say _"fix this"_ — the model has no idea what _"this"_ is |
+| Gap                                   | Example                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| Speech without context                | You say _"fix this"_ — the model has no idea what _"this"_ is                        |
 | Transcription without action evidence | You selected code, took a screenshot, opened an issue — none of it reaches the model |
-| Raw speech without restructuring | Human speech has fillers, pronoun jumps, and restarts — not suitable for LLMs |
-| Closed context model | Coding, writing, and research need completely different context tracks |
+| Raw speech without restructuring      | Human speech has fillers, pronoun jumps, and restarts — not suitable for LLMs        |
+| Closed context model                  | Coding, writing, and research need completely different context tracks               |
 
 ### What it produces
 
@@ -95,25 +95,25 @@ Code modification + bug investigation
 
 ## Features (V1 Alpha)
 
-| # | Feature | Track |
-|---|---------|-------|
-| 1 | Widget button to start/stop capture | Core |
-| 2 | Local ASR via Whisper (whisper.cpp / mlx-whisper) | Speech |
-| 3 | Cloud ASR option (Deepgram / OpenAI Whisper API) | Speech |
-| 4 | Selected text injection | Artifact |
-| 5 | In-app screenshot tool with region selection | Artifact |
-| 6 | Current URL + page title injection | Artifact |
-| 7 | Clipboard content injection | Artifact |
-| 8 | File drag-in injection | Artifact |
-| 9 | Intent compiler (local LLM default, cloud optional) | Core |
-| 10 | **Automatic pronoun resolution** (_"this"_/_"that"_ → nearest artifact) | Core |
-| 11 | Structured Markdown output generation | Core |
-| 12 | Collapsible always-on sidebar panel | UI |
-| 13 | Multi-track timeline viewer | UI |
-| 14 | One-click copy to clipboard | UI |
-| 15 | Auto-save session to local file | Storage |
-| 16 | Session history browser | Storage |
-| 17 | Provider settings (local ↔ cloud switcher) | Settings |
+| #   | Feature                                                                 | Track    |
+| --- | ----------------------------------------------------------------------- | -------- |
+| 1   | Widget button to start/stop capture                                     | Core     |
+| 2   | Local ASR via Whisper (whisper.cpp / mlx-whisper)                       | Speech   |
+| 3   | Cloud ASR option (Deepgram / OpenAI Whisper API)                        | Speech   |
+| 4   | Selected text injection                                                 | Artifact |
+| 5   | In-app screenshot tool with region selection                            | Artifact |
+| 6   | Current URL + page title injection                                      | Artifact |
+| 7   | Clipboard content injection                                             | Artifact |
+| 8   | File drag-in injection                                                  | Artifact |
+| 9   | Intent compiler (local LLM default, cloud optional)                     | Core     |
+| 10  | **Automatic pronoun resolution** (_"this"_/_"that"_ → nearest artifact) | Core     |
+| 11  | Structured Markdown output generation                                   | Core     |
+| 12  | Collapsible always-on sidebar panel                                     | UI       |
+| 13  | Multi-track timeline viewer                                             | UI       |
+| 14  | One-click copy to clipboard                                             | UI       |
+| 15  | Auto-save session to local file                                         | Storage  |
+| 16  | Session history browser                                                 | Storage  |
+| 17  | Provider settings (local ↔ cloud switcher)                              | Settings |
 
 ---
 
@@ -149,14 +149,14 @@ Talkiwi is built as a **Tauri 2.0** app with a Rust backend and React frontend.
 
 ### Tech Stack
 
-| Layer | Choice | Rationale |
-|-------|--------|-----------|
-| App shell | **Tauri 2.0** (Rust + WebView) | ~10 MB bundle, native macOS APIs, great performance |
-| Frontend | React + TypeScript | Fast iteration, rich ecosystem |
-| ASR | whisper.cpp / mlx-whisper | Local-first, Apple Silicon optimized |
-| Intent Compiler | Ollama + small model (Qwen2.5-7B, Phi-3) | Local-first, provider-switchable |
-| Storage | SQLite (rusqlite) | Session history and event storage |
-| IPC | Tauri commands + event system | Rust ↔ frontend communication |
+| Layer           | Choice                                   | Rationale                                           |
+| --------------- | ---------------------------------------- | --------------------------------------------------- |
+| App shell       | **Tauri 2.0** (Rust + WebView)           | ~10 MB bundle, native macOS APIs, great performance |
+| Frontend        | React + TypeScript                       | Fast iteration, rich ecosystem                      |
+| ASR             | whisper.cpp / mlx-whisper                | Local-first, Apple Silicon optimized                |
+| Intent Compiler | Ollama + small model (Qwen2.5-7B, Phi-3) | Local-first, provider-switchable                    |
+| Storage         | SQLite (rusqlite)                        | Session history and event storage                   |
+| IPC             | Tauri commands + event system            | Rust ↔ frontend communication                       |
 
 ### Crate Layout
 
@@ -209,12 +209,12 @@ pnpm tauri build
 
 Talkiwi requires the following macOS permissions on first launch:
 
-| Permission | Used for |
-|-----------|---------|
-| Microphone | Voice capture |
-| Screen Recording | Screenshot tool |
-| Accessibility | Text selection capture |
-| Automation (optional) | Browser URL detection |
+| Permission            | Used for               |
+| --------------------- | ---------------------- |
+| Microphone            | Voice capture          |
+| Screen Recording      | Screenshot tool        |
+| Accessibility         | Text selection capture |
+| Automation (optional) | Browser URL detection  |
 
 Each permission is requested on first use — Talkiwi will guide you through the setup wizard.
 
@@ -254,11 +254,11 @@ Talkiwi is **local-first by design**:
 
 ## Roadmap
 
-| Version | Scope |
-|---------|-------|
-| **V1 Alpha** _(current)_ | Core capture, ASR, intent compiler, sidebar UI, session history |
-| **V1.5** | Plugin SDK with track declaration API, IDE/Terminal/Git plugins, prompt templates |
-| **V2** | Ambient (continuous) mode, auto scene recognition, cross-session recall, team collaboration |
+| Version                  | Scope                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| **V1 Alpha** _(current)_ | Core capture, ASR, intent compiler, sidebar UI, session history                             |
+| **V1.5**                 | Plugin SDK with track declaration API, IDE/Terminal/Git plugins, prompt templates           |
+| **V2**                   | Ambient (continuous) mode, auto scene recognition, cross-session recall, team collaboration |
 
 ---
 

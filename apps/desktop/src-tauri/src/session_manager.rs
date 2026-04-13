@@ -337,6 +337,7 @@ mod tests {
                 constraints: vec![],
                 missing_context: vec![],
                 restructured_speech: "Test restructured".to_string(),
+                references: vec![],
             })
         }
     }

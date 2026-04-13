@@ -32,6 +32,7 @@ pub struct WhisperRuntimeConfig {
     pub vad_silence_timeout_ms: u64,
     pub vad_min_speech_duration_ms: u64,
     pub max_segment_ms: u64,
+    pub temperature: f32,
 }
 
 impl Default for WhisperRuntimeConfig {
@@ -57,6 +58,7 @@ impl From<&AsrConfig> for WhisperRuntimeConfig {
             vad_silence_timeout_ms: config.vad_silence_timeout_ms,
             vad_min_speech_duration_ms: config.vad_min_speech_duration_ms,
             max_segment_ms: config.max_segment_ms.max(1_000),
+            temperature: config.temperature,
         }
     }
 }
@@ -426,6 +428,8 @@ mod real_impl {
                 .unwrap_or(4),
         );
 
+        params.set_temperature(runtime_config.temperature);
+
         if let Some(prompt) = runtime_config.initial_prompt.as_deref() {
             params.set_initial_prompt(prompt);
         }
@@ -623,7 +627,8 @@ mod tests {
         assert_eq!(runtime.beam_size, 5);
         assert!(runtime.condition_on_previous_text);
         assert!(runtime.vad_enabled);
-        assert_eq!(runtime.max_segment_ms, 15_000);
+        assert_eq!(runtime.max_segment_ms, 10_000);
+        assert_eq!(runtime.temperature, 0.0);
         assert!(runtime.initial_prompt.is_some());
     }
 
@@ -671,8 +676,10 @@ mod tests {
 
     #[test]
     fn segmenter_flushes_on_speech_end_with_vad() {
+        // Use explicit silence timeout to decouple from config defaults
         let mut segmenter = AudioChunkSegmenter::new(WhisperRuntimeConfig {
             max_segment_ms: 10_000,
+            vad_silence_timeout_ms: 800,
             ..WhisperRuntimeConfig::default()
         });
 

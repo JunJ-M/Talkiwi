@@ -1,21 +1,45 @@
 :root {
+  /* ── Colors ─────────────────────────────────────────────── */
   --color-surface: oklch(98% 0 0);
   --color-text: oklch(18% 0 0);
   --color-accent: oklch(68% 0.21 140);
   --color-record: oklch(65% 0.25 25);
 
+  /* Glass / vibrancy — for overlays, floating panels, popovers */
+  --color-glass-bg: oklch(98% 0 0 / 0.72);
+  --color-glass-border: oklch(90% 0 0 / 0.5);
+
+  /* ── Shadows (layered hierarchy) ────────────────────────── */
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.04);
+  --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.08);
+  --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.12);
+
+  /* ── Blur ────────────────────────────────────────────────── */
+  --blur-sm: 8px;
+  --blur-md: 20px;
+  --blur-lg: 40px;
+
+  /* ── Typography ──────────────────────────────────────────── */
   --text-base: clamp(0.875rem, 0.8rem + 0.3vw, 1rem);
   --text-hero: clamp(1.5rem, 1rem + 2vw, 2rem);
 
+  /* ── Spacing (8px base grid) ─────────────────────────────── */
+  --space-xxs: 2px;
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
   --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
 
+  /* ── Radii ───────────────────────────────────────────────── */
   --radius-sm: 6px;
   --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-full: 9999px;
 
+  /* ── Motion ──────────────────────────────────────────────── */
   --duration-fast: 150ms;
   --duration-normal: 300ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);

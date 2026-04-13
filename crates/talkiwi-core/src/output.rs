@@ -1,6 +1,52 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IntentCategory {
+    Rewrite,
+    Analyze,
+    Summarize,
+    Generate,
+    Debug,
+    Query,
+    Unknown,
+}
+
+impl IntentCategory {
+    pub fn from_llm_output(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "rewrite" | "重写" => Self::Rewrite,
+            "analyze" | "分析" => Self::Analyze,
+            "summarize" | "总结" | "概述" => Self::Summarize,
+            "generate" | "生成" | "创建" => Self::Generate,
+            "debug" | "调试" | "修复" => Self::Debug,
+            "query" | "查询" | "问答" => Self::Query,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl RiskLevel {
+    pub fn from_confidence(confidence: f32) -> Self {
+        if confidence >= 0.8 {
+            Self::Low
+        } else if confidence >= 0.5 {
+            Self::Medium
+        } else {
+            Self::High
+        }
+    }
+}
+
 /// Reference resolution strategy.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -36,12 +82,26 @@ pub struct IntentOutput {
     pub session_id: Uuid,
     pub task: String,
     pub intent: String,
+    #[serde(default = "default_intent_category")]
+    pub intent_category: IntentCategory,
     pub constraints: Vec<String>,
     pub missing_context: Vec<String>,
     pub restructured_speech: String,
     pub final_markdown: String,
     pub artifacts: Vec<ArtifactRef>,
     pub references: Vec<Reference>,
+    #[serde(default)]
+    pub output_confidence: f32,
+    #[serde(default = "default_risk_level")]
+    pub risk_level: RiskLevel,
+}
+
+fn default_intent_category() -> IntentCategory {
+    IntentCategory::Unknown
+}
+
+fn default_risk_level() -> RiskLevel {
+    RiskLevel::High
 }
 
 #[cfg(test)]
@@ -87,6 +147,7 @@ mod tests {
             session_id: Uuid::new_v4(),
             task: "Rewrite the function".to_string(),
             intent: "rewrite".to_string(),
+            intent_category: IntentCategory::Rewrite,
             constraints: vec!["use Rust".to_string()],
             missing_context: vec!["which function".to_string()],
             restructured_speech: "Please rewrite the selected function using Rust".to_string(),
@@ -97,6 +158,8 @@ mod tests {
                 inline_summary: "Selected code in VSCode".to_string(),
             }],
             references: vec![],
+            output_confidence: 0.88,
+            risk_level: RiskLevel::Low,
         };
 
         let json = serde_json::to_string(&output).unwrap();
@@ -104,5 +167,7 @@ mod tests {
         assert_eq!(deserialized.task, "Rewrite the function");
         assert_eq!(deserialized.artifacts.len(), 1);
         assert_eq!(deserialized.artifacts[0].label, "context-1");
+        assert_eq!(deserialized.intent_category, IntentCategory::Rewrite);
+        assert_eq!(deserialized.risk_level, RiskLevel::Low);
     }
 }

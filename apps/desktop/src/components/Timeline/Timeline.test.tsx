@@ -19,7 +19,7 @@ describe("Timeline", () => {
   it("shows empty states when no data", () => {
     render(<Timeline />);
     expect(screen.getByText("Waiting for speech...")).toBeInTheDocument();
-    expect(screen.getByText("No actions captured yet")).toBeInTheDocument();
+    expect(screen.getByText("No actions captured")).toBeInTheDocument();
   });
 
   it("renders speak segments", () => {
@@ -34,7 +34,7 @@ describe("Timeline", () => {
     expect(screen.getByText(/hello world/)).toBeInTheDocument();
   });
 
-  it("renders action events", () => {
+  it("renders action events as marble circles", () => {
     useTimelineStore.getState().addEvent({
       id: "evt-1",
       session_id: "sess-1",
@@ -53,12 +53,15 @@ describe("Timeline", () => {
       confidence: 0.9,
     });
     render(<Timeline />);
-    expect(screen.getByText("text")).toBeInTheDocument();
-    expect(screen.getByText("selected text here")).toBeInTheDocument();
-    expect(screen.getByText("0:05")).toBeInTheDocument();
+    // Marble shows initial letter "T" for "text"
+    expect(screen.getByText("T")).toBeInTheDocument();
+    // Marble has title with offset
+    expect(
+      screen.getByTitle("selection.text @ 0:05"),
+    ).toBeInTheDocument();
   });
 
-  it("renders click.link target url", () => {
+  it("renders click.link as marble circle", () => {
     useTimelineStore.getState().addEvent({
       id: "evt-2",
       session_id: "sess-1",
@@ -77,7 +80,11 @@ describe("Timeline", () => {
     });
 
     render(<Timeline />);
-    expect(screen.getByText("https://target.example.com")).toBeInTheDocument();
+    // Marble shows initial letter "L" for "link"
+    expect(screen.getByText("L")).toBeInTheDocument();
+    expect(
+      screen.getByTitle("click.link @ 0:02"),
+    ).toBeInTheDocument();
   });
 
   it("renders multiple segments with final/non-final styling", () => {
