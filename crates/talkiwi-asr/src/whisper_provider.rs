@@ -228,6 +228,16 @@ mod real_impl {
         segments: Vec<SpeakSegment>,
     }
 
+    /// Signal from the inference thread to the async caller about whether
+    /// model/state initialization succeeded. Sent once, early, before the
+    /// worker enters its request loop — so `transcribe_stream` can fail
+    /// fast and surface the error to the session manager instead of
+    /// silently dropping audio.
+    enum InitResult {
+        Ready,
+        Failed(String),
+    }
+
     #[async_trait::async_trait]
     impl AsrProvider for WhisperLocalProvider {
         fn id(&self) -> &str {
@@ -267,13 +277,40 @@ mod real_impl {
             // plain std::thread (WhisperState is !Send).
             let (req_tx, req_rx) = std_mpsc::channel::<InferenceRequest>();
             let (res_tx, mut res_rx_async) = mpsc::channel::<InferenceResult>(16);
+            // Oneshot-ish init handshake — std channel so the std::thread
+            // can send before any async runtime is involved.
+            let (init_tx, init_rx) = std_mpsc::channel::<InitResult>();
 
             // Spawn dedicated inference thread — owns WhisperContext + WhisperState.
             // WhisperState is !Send on macOS (CoreAudio), so all whisper-rs
             // operations must stay on this single std::thread.
             let inference_handle = std::thread::spawn(move || {
-                inference_worker(model_path, runtime_config, req_rx, res_tx);
+                inference_worker(model_path, runtime_config, req_rx, res_tx, init_tx);
             });
+
+            // Wait for the inference worker to report whether it successfully
+            // loaded the model / created the state. This is the only chance
+            // for the session manager to bail out loudly — after this point,
+            // a failed worker would silently drop all audio.
+            match init_rx.recv() {
+                Ok(InitResult::Ready) => {}
+                Ok(InitResult::Failed(reason)) => {
+                    let _ = inference_handle.join();
+                    anyhow::bail!("whisper inference worker failed to start: {}", reason);
+                }
+                Err(_) => {
+                    // The inference thread crashed before reporting init status.
+                    let panic_info = inference_handle
+                        .join()
+                        .err()
+                        .map(|e| format!("{e:?}"))
+                        .unwrap_or_else(|| "thread exited without reporting".to_string());
+                    anyhow::bail!(
+                        "whisper inference worker never reported ready: {}",
+                        panic_info
+                    );
+                }
+            }
 
             // Segmenter loop — runs in tokio async context
             let mut segmenter = AudioChunkSegmenter::new(self.config.clone());
@@ -337,11 +374,17 @@ mod real_impl {
 
     /// Dedicated inference worker — runs on its own std::thread.
     /// Owns WhisperContext and WhisperState (both are !Send).
+    ///
+    /// Sends `InitResult` exactly once on `init_tx` before entering the
+    /// request loop so the async caller can detect a failed startup and
+    /// bail out of `transcribe_stream` with a real error (instead of
+    /// silently dropping audio for the entire session).
     fn inference_worker(
         model_path: String,
         runtime_config: WhisperRuntimeConfig,
         req_rx: std_mpsc::Receiver<InferenceRequest>,
         res_tx: mpsc::Sender<InferenceResult>,
+        init_tx: std_mpsc::Sender<InitResult>,
     ) {
         info!(model = %model_path, "loading whisper model");
 
@@ -350,7 +393,9 @@ mod real_impl {
             {
                 Ok(ctx) => ctx,
                 Err(e) => {
+                    let msg = format!("failed to load whisper model: {e}");
                     warn!(error = %e, "failed to load whisper model");
+                    let _ = init_tx.send(InitResult::Failed(msg));
                     return;
                 }
             };
@@ -358,10 +403,15 @@ mod real_impl {
         let mut state = match ctx.create_state() {
             Ok(s) => s,
             Err(e) => {
+                let msg = format!("failed to create whisper state: {e}");
                 warn!(error = %e, "failed to create whisper state");
+                let _ = init_tx.send(InitResult::Failed(msg));
                 return;
             }
         };
+
+        // Report ready BEFORE the request loop so the async caller unblocks.
+        let _ = init_tx.send(InitResult::Ready);
 
         info!("whisper model loaded, inference worker ready");
 
@@ -734,63 +784,48 @@ mod tests {
         assert!(!provider.is_available().await);
     }
 
-    /// Real impl test: transcribe_stream returns error when model is missing.
+    /// Real impl test: transcribe_stream returns a LOUD error when the
+    /// model file is missing, instead of silently eating every audio chunk
+    /// and returning Ok(()). This is the contract the session manager
+    /// relies on to surface ASR failures to the UI.
     #[cfg(feature = "whisper")]
     #[tokio::test]
     async fn whisper_provider_transcribe_stream_no_model() {
         let provider = WhisperLocalProvider::new("/nonexistent/model.bin", None);
 
-        let (audio_tx, audio_rx) = mpsc::channel(16);
-        let (segment_tx, mut segment_rx) = mpsc::channel(16);
+        let (_audio_tx, audio_rx) = mpsc::channel::<AudioChunk>(16);
+        let (segment_tx, _segment_rx) = mpsc::channel(16);
 
-        let handle = tokio::spawn(async move {
-            provider
-                .transcribe_stream(audio_rx, segment_tx)
-                .await
-                .unwrap();
-        });
+        let result = provider.transcribe_stream(audio_rx, segment_tx).await;
 
-        // Send a small amount of audio
-        for i in 0..20 {
-            let chunk = AudioChunk {
-                samples: vec![0.1; 1600],
-                offset_ms: i * 100,
-                sample_rate: 16000,
-            };
-            if audio_tx.send(chunk).await.is_err() {
-                break;
-            }
-        }
-
-        drop(audio_tx);
-        handle.await.unwrap();
-
-        // With no model file, the inference thread fails to load and
-        // produces no segments
-        let mut segments = Vec::new();
-        while let Ok(seg) = segment_rx.try_recv() {
-            segments.push(seg);
-        }
+        let err = result.expect_err("missing model must produce Err, not Ok");
+        let msg = err.to_string();
         assert!(
-            segments.is_empty(),
-            "Should produce no segments when model is missing"
+            msg.contains("failed to load whisper model")
+                || msg.contains("whisper inference worker failed to start"),
+            "error should name the missing-model failure, got: {msg}"
         );
     }
 
-    /// Real impl test: verifies inference worker handles empty audio gracefully.
+    /// Real impl test: same error contract even when no audio ever arrives.
+    /// Previously this returned Ok(()) because the init failure was swallowed;
+    /// now it must fail fast at the init handshake.
     #[cfg(feature = "whisper")]
     #[tokio::test]
     async fn whisper_provider_empty_audio_no_model() {
         let provider = WhisperLocalProvider::new("/nonexistent/model.bin", None);
 
-        let (_audio_tx, audio_rx) = mpsc::channel::<AudioChunk>(16);
+        let (audio_tx, audio_rx) = mpsc::channel::<AudioChunk>(16);
         let (segment_tx, _segment_rx) = mpsc::channel(16);
 
         // Immediately drop audio_tx to close channel
-        drop(_audio_tx);
+        drop(audio_tx);
 
         let result = provider.transcribe_stream(audio_rx, segment_tx).await;
-        assert!(result.is_ok(), "Should not error on empty stream");
+        assert!(
+            result.is_err(),
+            "missing model must fail-fast even with empty audio stream"
+        );
     }
 
     /// Stub-specific test: verifies placeholder text output.

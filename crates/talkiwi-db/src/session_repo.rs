@@ -126,6 +126,13 @@ impl<'a> SessionRepo<'a> {
         }
 
         // 4. INSERT action_events
+        //
+        // Always bind the session id from the `session` argument — the
+        // event's own session_id may be stale (e.g., nil placeholder from
+        // captures registered before any session existed). Using
+        // `evt.session_id` here would violate the FOREIGN KEY on
+        // action_events.session_id.
+        let session_id_str = session.id.to_string();
         for evt in events {
             let payload_json = serde_json::to_string(&evt.payload)
                 .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
@@ -134,7 +141,7 @@ impl<'a> SessionRepo<'a> {
                 "INSERT INTO action_events (id, session_id, timestamp, session_offset_ms, observed_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     evt.id.to_string(),
-                    evt.session_id.to_string(),
+                    session_id_str,
                     evt.timestamp,
                     evt.session_offset_ms,
                     evt.observed_offset_ms,

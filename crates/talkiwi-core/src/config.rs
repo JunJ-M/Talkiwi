@@ -44,7 +44,13 @@ fn default_temperature() -> f32 {
 }
 
 fn default_input_gain_db() -> f32 {
-    8.0
+    // 0 dB = no software gain. We used to default to 8 dB, but that
+    // pushed background noise over the 0.02 VAD threshold (so VAD
+    // thought the user was speaking non-stop, never flushed segments,
+    // and whisper fed on one long low-SNR buffer → repetition-loop
+    // garbage transcripts). Users with quiet mics can still bump this
+    // up in Settings; most built-in laptop mics don't need it.
+    0.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

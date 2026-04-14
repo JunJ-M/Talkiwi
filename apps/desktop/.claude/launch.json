@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "talkiwi-widget",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5555", "--strictPort"],
+      "port": 5555
+    }
+  ]
+}

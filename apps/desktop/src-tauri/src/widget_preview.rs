@@ -190,6 +190,25 @@ impl PreviewState {
             self.final_segments.pop_front();
         }
 
+        // Bins are indexed by absolute time within the rolling window:
+        //
+        //   bin[0]           = samples in [window_start, window_start + BIN_MS)
+        //   bin[1]           = samples in [window_start + BIN_MS, window_start + 2*BIN_MS)
+        //   ...
+        //   bin[BIN_COUNT-1] = samples in [window_end - BIN_MS, window_end)
+        //
+        // For elapsed < WINDOW_MS:
+        //   window_start = 0, so bin[i] = time [i*BIN_MS, (i+1)*BIN_MS).
+        //   Only bins 0..(elapsed/BIN_MS) are populated; higher bins stay 0.
+        //   The frontend positions bar i at `i / BIN_COUNT * 100%` of the
+        //   timeline, so the populated bars appear on the LEFT and grow
+        //   toward the right as time progresses, with the playhead at
+        //   `elapsed / WINDOW_MS * 100%` tracking the newest bar.
+        //
+        // For elapsed >= WINDOW_MS:
+        //   window_start slides forward, older samples drop out via the
+        //   pruning loop above, and all BIN_COUNT slots are eventually
+        //   populated (steady-state sliding window).
         let mut audio_bins = vec![0.0_f32; BIN_COUNT];
         let mut speech_bins = vec![0.0_f32; BIN_COUNT];
         for (offset_ms, level, speech) in &self.audio_levels {
@@ -306,6 +325,77 @@ mod tests {
 
         let snapshot = state.build_snapshot(0);
         assert!(snapshot.health.degraded);
+    }
+
+    #[test]
+    fn preview_state_bins_by_absolute_time_within_first_window() {
+        // While elapsed_ms < WINDOW_MS the timeline is anchored at t=0 and
+        // bins are indexed by absolute time. The frontend renders bars at
+        // position `i / BIN_COUNT * 100%` so a "progress bar" fills from
+        // the left edge and the playhead (computed from elapsed_ms)
+        // advances rightward in lockstep with time.
+        let mut state = PreviewState::new(None);
+
+        // 20 levels, one per BIN_MS (250 ms), covering [0, 5000) ms.
+        for i in 0..20u64 {
+            state.apply(
+                PreviewEvent::AudioLevel {
+                    offset_ms: i * BIN_MS,
+                    rms: 0.5,
+                    peak: 0.8,
+                    vad_active: true,
+                },
+                i * BIN_MS,
+            );
+        }
+
+        let snapshot = state.build_snapshot(5_000);
+
+        // First 20 bins (absolute time [0, 5000) ms) should be populated,
+        // everything past them should still be zero. That yields a "growing
+        // from the left" visualization on the frontend.
+        for i in 0..20 {
+            assert!(
+                snapshot.audio_bins[i] > 0.0,
+                "bin {} should be populated within [0, 5000) ms",
+                i
+            );
+        }
+        for i in 20..BIN_COUNT {
+            assert_eq!(
+                snapshot.audio_bins[i], 0.0,
+                "bin {} is past the playhead and must be empty",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn preview_state_bins_slide_after_window_fills() {
+        // Once elapsed_ms exceeds WINDOW_MS the window slides forward and
+        // every bin ends up populated. This guarantees there's no "stuck at
+        // the start" regression for long sessions — the backend must keep
+        // emitting a fresh rolling view, not a fixed left-anchored one.
+        let mut state = PreviewState::new(None);
+
+        // Emit one level per bin for 40 seconds of simulated time.
+        for i in 0..160u64 {
+            state.apply(
+                PreviewEvent::AudioLevel {
+                    offset_ms: i * BIN_MS,
+                    rms: 0.4,
+                    peak: 0.6,
+                    vad_active: true,
+                },
+                i * BIN_MS,
+            );
+        }
+
+        let snapshot = state.build_snapshot(40_000);
+        // After 40 s the window should show [10_000, 40_000) ms — all
+        // 120 bins populated, the oldest at bin[0] and newest at bin[119].
+        assert!(snapshot.audio_bins[0] > 0.0);
+        assert!(snapshot.audio_bins[BIN_COUNT - 1] > 0.0);
     }
 
     #[test]

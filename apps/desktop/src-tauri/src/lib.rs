@@ -154,8 +154,40 @@ fn setup_ball_window(_window: &WebviewWindow) {
     // No additional Rust-side setup needed — the window is already transparent.
 }
 
+/// Initialize the global tracing subscriber.
+///
+/// Without this, every `tracing::info!` / `warn!` / `debug!` in the crate
+/// graph is a no-op and silently swallowed — which has historically hidden
+/// real ASR / audio capture errors from developers.
+///
+/// Defaults to `info` for the world plus `debug` for our own `talkiwi_*`
+/// crates so whisper provider, audio capture, and track pipelines emit
+/// meaningful logs out of the box. Users can override via `RUST_LOG`.
+fn init_tracing() {
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(
+            "info,talkiwi_asr=debug,talkiwi_track=debug,talkiwi_desktop=debug,whisper_rs=info",
+        )
+    });
+
+    // `try_init` instead of `init` so repeated calls in tests don't panic.
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
 /// Application entry point.
 pub fn run() {
+    init_tracing();
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "Talkiwi desktop starting up"
+    );
+
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;

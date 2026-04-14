@@ -2,6 +2,7 @@ pub mod audio_capture;
 pub mod audio_input;
 pub mod audio_source;
 pub mod model_manager;
+pub mod null_provider;
 #[cfg(feature = "openai")]
 pub mod openai_provider;
 pub mod vad;
@@ -12,6 +13,7 @@ pub use audio_capture::AudioCapture;
 pub use audio_input::{AudioInputManager, SelectedAudioInput};
 pub use audio_source::AudioSource;
 pub use model_manager::{check_model_status, resolve_model_path, ModelSize, ModelStatus};
+pub use null_provider::NullAsrProvider;
 #[cfg(feature = "openai")]
 pub use openai_provider::{OpenAiWhisperConfig, OpenAiWhisperProvider};
 pub use talkiwi_core::traits::asr::{AsrProvider, AudioChunk};

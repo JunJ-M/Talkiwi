@@ -132,7 +132,10 @@ impl SessionManager {
         // Start ActionTrack (synchronous — does not block executor)
         {
             let mut action = self.action_track.lock().await;
-            if let Err(error) = action.start(action_tx, clock, preview_tx).await {
+            if let Err(error) = action
+                .start(session_id, action_tx, clock, preview_tx)
+                .await
+            {
                 self.reset_after_start_failure().await;
                 return Err(TalkiwiError::CaptureFailed {
                     module: "action_track".into(),
