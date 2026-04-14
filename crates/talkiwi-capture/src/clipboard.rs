@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use talkiwi_core::clock::SessionClock;
 use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType, ClipboardContentType};
 use talkiwi_core::traits::capture::{ActionCapture, PermissionStatus};
 
@@ -44,12 +45,11 @@ impl ActionCapture for ClipboardCapture {
         &[ActionType::ClipboardChange]
     }
 
-    fn start(&mut self, tx: mpsc::Sender<ActionEvent>) -> anyhow::Result<()> {
+    fn start(&mut self, tx: mpsc::Sender<ActionEvent>, clock: SessionClock) -> anyhow::Result<()> {
         let running = Arc::clone(&self.running);
         running.store(true, Ordering::SeqCst);
 
         let session_id = self.session_id;
-        let start_time = std::time::Instant::now();
 
         let handle = std::thread::spawn(move || {
             let ctx = match ClipboardContext::new() {
@@ -91,16 +91,17 @@ impl ActionCapture for ClipboardCapture {
                     continue;
                 };
 
-                let offset_ms = start_time.elapsed().as_millis() as u64;
+                let offset_ms = clock.elapsed_ms();
 
                 let event = ActionEvent {
                     id: Uuid::new_v4(),
                     session_id,
                     timestamp: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0),
                     session_offset_ms: offset_ms,
+                    observed_offset_ms: Some(offset_ms),
                     duration_ms: None,
                     action_type: ActionType::ClipboardChange,
-                    plugin_id: "builtin".to_string(),
+                    plugin_id: "builtin.clipboard".to_string(),
                     payload: ActionPayload::ClipboardChange {
                         content_type,
                         text,
@@ -162,7 +163,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
 
         // Should start and stop without errors
-        capture.start(tx).unwrap();
+        capture.start(tx, SessionClock::new()).unwrap();
         assert!(capture.running.load(Ordering::SeqCst));
 
         // Brief pause to let thread start

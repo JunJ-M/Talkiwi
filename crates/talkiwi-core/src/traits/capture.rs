@@ -1,3 +1,4 @@
+use crate::clock::SessionClock;
 use crate::event::{ActionEvent, ActionType};
 use tokio::sync::mpsc;
 
@@ -14,7 +15,7 @@ pub enum PermissionStatus {
 pub trait ActionCapture: Send + Sync {
     fn id(&self) -> &str;
     fn action_types(&self) -> &[ActionType];
-    fn start(&mut self, tx: mpsc::Sender<ActionEvent>) -> anyhow::Result<()>;
+    fn start(&mut self, tx: mpsc::Sender<ActionEvent>, clock: SessionClock) -> anyhow::Result<()>;
     fn stop(&mut self) -> anyhow::Result<()>;
     fn check_permission(&self) -> PermissionStatus;
 }

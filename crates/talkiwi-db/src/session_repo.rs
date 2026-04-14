@@ -1,8 +1,11 @@
 use rusqlite::{params, Connection, Error as SqlError};
 use serde::de::DeserializeOwned;
 use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType};
-use talkiwi_core::output::{ArtifactRef, IntentOutput, Reference, ReferenceStrategy};
+use talkiwi_core::output::{
+    ArtifactRef, IntentCategory, IntentOutput, Reference, ReferenceStrategy, RiskLevel,
+};
 use talkiwi_core::session::{Session, SessionState, SessionSummary, SpeakSegment};
+use talkiwi_core::telemetry::{IntentTelemetry, TraceTelemetry};
 use talkiwi_core::TalkiwiError;
 use uuid::Uuid;
 
@@ -21,6 +24,18 @@ pub struct SessionDetail {
     pub events: Vec<ActionEvent>,
     /// Path to the recorded WAV file, if available.
     pub audio_path: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QualityOverview {
+    pub intent_sessions: usize,
+    pub trace_sessions: usize,
+    pub avg_provider_latency_ms: f32,
+    pub avg_output_confidence: f32,
+    pub fallback_rate: f32,
+    pub degraded_trace_rate: f32,
+    pub latest_intent: Option<IntentTelemetry>,
+    pub latest_trace: Option<TraceTelemetry>,
 }
 
 pub struct SessionRepo<'a> {
@@ -79,16 +94,19 @@ impl<'a> SessionRepo<'a> {
             .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
 
         tx.execute(
-            "INSERT INTO intent_outputs (session_id, task, intent, constraints, missing_context, restructured_speech, final_markdown, artifacts_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO intent_outputs (session_id, task, intent, intent_category, constraints, missing_context, restructured_speech, final_markdown, artifacts_json, output_confidence, risk_level) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 session.id.to_string(),
                 output.task,
                 output.intent,
+                serialize_intent_category(&output.intent_category),
                 constraints_json,
                 missing_json,
                 output.restructured_speech,
                 output.final_markdown,
                 artifacts_json,
+                output.output_confidence,
+                serialize_risk_level(&output.risk_level),
             ],
         ).map_err(map_err)?;
 
@@ -113,12 +131,13 @@ impl<'a> SessionRepo<'a> {
                 .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
 
             tx.execute(
-                "INSERT INTO action_events (id, session_id, timestamp, session_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO action_events (id, session_id, timestamp, session_offset_ms, observed_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     evt.id.to_string(),
                     evt.session_id.to_string(),
                     evt.timestamp,
                     evt.session_offset_ms,
+                    evt.observed_offset_ms,
                     evt.duration_ms,
                     evt.action_type.as_str(),
                     evt.plugin_id,
@@ -150,6 +169,50 @@ impl<'a> SessionRepo<'a> {
         Ok(())
     }
 
+    pub fn save_intent_telemetry(&self, telemetry: &IntentTelemetry) -> talkiwi_core::Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO intent_telemetry (session_id, timestamp, provider_latency_ms, provider_success, retry_count, fallback_used, schema_valid, repair_attempted, output_confidence, reference_count, low_confidence_refs, intent_category) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    telemetry.session_id.to_string(),
+                    telemetry.timestamp,
+                    telemetry.provider_latency_ms,
+                    telemetry.provider_success as i32,
+                    telemetry.retry_count,
+                    telemetry.fallback_used as i32,
+                    telemetry.schema_valid as i32,
+                    telemetry.repair_attempted as i32,
+                    telemetry.output_confidence,
+                    telemetry.reference_count as i64,
+                    telemetry.low_confidence_refs as i64,
+                    telemetry.intent_category,
+                ],
+            )
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    pub fn save_trace_telemetry(&self, telemetry: &TraceTelemetry) -> talkiwi_core::Result<()> {
+        let capture_health_json = serde_json::to_string(&telemetry.capture_health)
+            .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
+
+        self.conn
+            .execute(
+                "INSERT INTO trace_telemetry (session_id, duration_ms, segment_count, event_count, capture_health_json, event_density, alignment_anomalies) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    telemetry.session_id.to_string(),
+                    telemetry.duration_ms,
+                    telemetry.segment_count as i64,
+                    telemetry.event_count as i64,
+                    capture_health_json,
+                    telemetry.event_density,
+                    telemetry.alignment_anomalies as i64,
+                ],
+            )
+            .map_err(map_err)?;
+        Ok(())
+    }
+
     /// Get full session detail for history replay.
     pub fn get_session_detail(&self, session_id: &str) -> talkiwi_core::Result<SessionDetail> {
         // 1. Session + audio_path
@@ -174,26 +237,29 @@ impl<'a> SessionRepo<'a> {
 
         // 2. IntentOutput
         let output = self.conn.query_row(
-            "SELECT task, intent, constraints, missing_context, restructured_speech, final_markdown, artifacts_json FROM intent_outputs WHERE session_id = ?1",
+            "SELECT task, intent, intent_category, constraints, missing_context, restructured_speech, final_markdown, artifacts_json, output_confidence, risk_level FROM intent_outputs WHERE session_id = ?1",
             params![session_id],
             |row| {
                 let constraints: Vec<String> =
-                    parse_json_column(&row.get::<_, String>(2)?, "intent_outputs.constraints")?;
+                    parse_json_column(&row.get::<_, String>(3)?, "intent_outputs.constraints")?;
                 let missing: Vec<String> =
-                    parse_json_column(&row.get::<_, String>(3)?, "intent_outputs.missing_context")?;
+                    parse_json_column(&row.get::<_, String>(4)?, "intent_outputs.missing_context")?;
                 let artifacts: Vec<ArtifactRef> =
-                    parse_json_column(&row.get::<_, String>(6)?, "intent_outputs.artifacts_json")?;
+                    parse_json_column(&row.get::<_, String>(7)?, "intent_outputs.artifacts_json")?;
 
                 Ok(IntentOutput {
                     session_id: session.id,
                     task: row.get(0)?,
                     intent: row.get(1)?,
+                    intent_category: parse_intent_category(&row.get::<_, String>(2)?)?,
                     constraints,
                     missing_context: missing,
-                    restructured_speech: row.get(4)?,
-                    final_markdown: row.get(5)?,
+                    restructured_speech: row.get(5)?,
+                    final_markdown: row.get(6)?,
                     artifacts,
                     references: vec![], // filled below
+                    output_confidence: row.get(8)?,
+                    risk_level: parse_risk_level(&row.get::<_, String>(9)?)?,
                 })
             },
         ).map_err(map_err)?;
@@ -218,26 +284,27 @@ impl<'a> SessionRepo<'a> {
 
         // 4. ActionEvents
         let mut evt_stmt = self.conn.prepare(
-            "SELECT id, session_id, timestamp, session_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence FROM action_events WHERE session_id = ?1 ORDER BY session_offset_ms"
+            "SELECT id, session_id, timestamp, session_offset_ms, observed_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence FROM action_events WHERE session_id = ?1 ORDER BY session_offset_ms"
         ).map_err(map_err)?;
         let events: Vec<ActionEvent> = evt_stmt
             .query_map(params![session_id], |row| {
-                let payload_str: String = row.get(7)?;
+                let payload_str: String = row.get(8)?;
                 let payload: ActionPayload =
                     parse_json_column(&payload_str, "action_events.payload")?;
-                let action_type_str: String = row.get(5)?;
+                let action_type_str: String = row.get(6)?;
 
                 Ok(ActionEvent {
                     id: parse_uuid(&row.get::<_, String>(0)?)?,
                     session_id: parse_uuid(&row.get::<_, String>(1)?)?,
                     timestamp: row.get(2)?,
                     session_offset_ms: row.get(3)?,
-                    duration_ms: row.get(4)?,
+                    observed_offset_ms: row.get(4)?,
+                    duration_ms: row.get(5)?,
                     action_type: ActionType::from_str_name(&action_type_str),
-                    plugin_id: row.get(6)?,
+                    plugin_id: row.get(7)?,
                     payload,
-                    semantic_hint: row.get(8)?,
-                    confidence: row.get(9)?,
+                    semantic_hint: row.get(9)?,
+                    confidence: row.get(10)?,
                 })
             })
             .map_err(map_err)?
@@ -312,6 +379,137 @@ impl<'a> SessionRepo<'a> {
 
         Ok(summaries)
     }
+
+    pub fn quality_overview(&self, limit: usize) -> talkiwi_core::Result<QualityOverview> {
+        let intent_rows = self.load_intent_telemetry(limit)?;
+        let trace_rows = self.load_trace_telemetry(limit)?;
+
+        let avg_provider_latency_ms = if intent_rows.is_empty() {
+            0.0
+        } else {
+            intent_rows
+                .iter()
+                .map(|row| row.provider_latency_ms as f32)
+                .sum::<f32>()
+                / intent_rows.len() as f32
+        };
+
+        let avg_output_confidence = if intent_rows.is_empty() {
+            0.0
+        } else {
+            intent_rows
+                .iter()
+                .map(|row| row.output_confidence)
+                .sum::<f32>()
+                / intent_rows.len() as f32
+        };
+
+        let fallback_rate = if intent_rows.is_empty() {
+            0.0
+        } else {
+            intent_rows.iter().filter(|row| row.fallback_used).count() as f32
+                / intent_rows.len() as f32
+        };
+
+        let degraded_trace_rate = if trace_rows.is_empty() {
+            0.0
+        } else {
+            trace_rows
+                .iter()
+                .filter(|row| {
+                    row.capture_health.iter().any(|entry| {
+                        matches!(
+                            entry.status,
+                            talkiwi_core::telemetry::CaptureStatus::PermissionDenied
+                                | talkiwi_core::telemetry::CaptureStatus::Stale
+                                | talkiwi_core::telemetry::CaptureStatus::Error
+                        )
+                    })
+                })
+                .count() as f32
+                / trace_rows.len() as f32
+        };
+
+        Ok(QualityOverview {
+            intent_sessions: intent_rows.len(),
+            trace_sessions: trace_rows.len(),
+            avg_provider_latency_ms,
+            avg_output_confidence,
+            fallback_rate,
+            degraded_trace_rate,
+            latest_intent: intent_rows.into_iter().next(),
+            latest_trace: trace_rows.into_iter().next(),
+        })
+    }
+
+    fn load_intent_telemetry(&self, limit: usize) -> talkiwi_core::Result<Vec<IntentTelemetry>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT session_id, timestamp, provider_latency_ms, provider_success, retry_count, fallback_used, schema_valid, repair_attempted, output_confidence, reference_count, low_confidence_refs, intent_category
+                 FROM intent_telemetry
+                 ORDER BY id DESC
+                 LIMIT ?1",
+            )
+            .map_err(map_err)?;
+
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(IntentTelemetry {
+                    session_id: parse_uuid(&row.get::<_, String>(0)?)?,
+                    timestamp: row.get(1)?,
+                    provider_latency_ms: row.get(2)?,
+                    provider_success: row.get::<_, i32>(3)? != 0,
+                    retry_count: row.get::<_, i64>(4)? as u32,
+                    fallback_used: row.get::<_, i32>(5)? != 0,
+                    schema_valid: row.get::<_, i32>(6)? != 0,
+                    repair_attempted: row.get::<_, i32>(7)? != 0,
+                    output_confidence: row.get(8)?,
+                    reference_count: row.get::<_, i64>(9)? as usize,
+                    low_confidence_refs: row.get::<_, i64>(10)? as usize,
+                    intent_category: row.get(11)?,
+                })
+            })
+            .map_err(map_err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+
+        Ok(rows)
+    }
+
+    fn load_trace_telemetry(&self, limit: usize) -> talkiwi_core::Result<Vec<TraceTelemetry>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT session_id, duration_ms, segment_count, event_count, capture_health_json, event_density, alignment_anomalies
+                 FROM trace_telemetry
+                 ORDER BY id DESC
+                 LIMIT ?1",
+            )
+            .map_err(map_err)?;
+
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                let capture_health_json: String = row.get(4)?;
+                Ok(TraceTelemetry {
+                    session_id: parse_uuid(&row.get::<_, String>(0)?)?,
+                    duration_ms: row.get(1)?,
+                    segment_count: row.get::<_, i64>(2)? as usize,
+                    event_count: row.get::<_, i64>(3)? as usize,
+                    capture_health: parse_json_column(
+                        &capture_health_json,
+                        "trace_telemetry.capture_health_json",
+                    )?,
+                    event_density: row.get(5)?,
+                    alignment_anomalies: row.get::<_, i64>(6)? as usize,
+                })
+            })
+            .map_err(map_err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+
+        Ok(rows)
+    }
 }
 
 fn map_err(e: rusqlite::Error) -> TalkiwiError {
@@ -357,6 +555,54 @@ fn parse_strategy(s: &str) -> std::result::Result<ReferenceStrategy, SqlError> {
         "user_confirmed" => Ok(ReferenceStrategy::UserConfirmed),
         other => Err(invalid_data_err(format!(
             "invalid references_.strategy value: {}",
+            other
+        ))),
+    }
+}
+
+fn serialize_intent_category(category: &IntentCategory) -> &'static str {
+    match category {
+        IntentCategory::Rewrite => "rewrite",
+        IntentCategory::Analyze => "analyze",
+        IntentCategory::Summarize => "summarize",
+        IntentCategory::Generate => "generate",
+        IntentCategory::Debug => "debug",
+        IntentCategory::Query => "query",
+        IntentCategory::Unknown => "unknown",
+    }
+}
+
+fn parse_intent_category(s: &str) -> std::result::Result<IntentCategory, SqlError> {
+    match s {
+        "rewrite" => Ok(IntentCategory::Rewrite),
+        "analyze" => Ok(IntentCategory::Analyze),
+        "summarize" => Ok(IntentCategory::Summarize),
+        "generate" => Ok(IntentCategory::Generate),
+        "debug" => Ok(IntentCategory::Debug),
+        "query" => Ok(IntentCategory::Query),
+        "unknown" => Ok(IntentCategory::Unknown),
+        other => Err(invalid_data_err(format!(
+            "invalid intent_outputs.intent_category value: {}",
+            other
+        ))),
+    }
+}
+
+fn serialize_risk_level(level: &RiskLevel) -> &'static str {
+    match level {
+        RiskLevel::Low => "low",
+        RiskLevel::Medium => "medium",
+        RiskLevel::High => "high",
+    }
+}
+
+fn parse_risk_level(s: &str) -> std::result::Result<RiskLevel, SqlError> {
+    match s {
+        "low" => Ok(RiskLevel::Low),
+        "medium" => Ok(RiskLevel::Medium),
+        "high" => Ok(RiskLevel::High),
+        other => Err(invalid_data_err(format!(
+            "invalid intent_outputs.risk_level value: {}",
             other
         ))),
     }
@@ -432,6 +678,7 @@ mod tests {
             session_id,
             timestamp: 1712900001000,
             session_offset_ms: 1000,
+            observed_offset_ms: Some(1000),
             duration_ms: None,
             action_type: ActionType::SelectionText,
             plugin_id: "builtin".to_string(),
@@ -449,6 +696,7 @@ mod tests {
             session_id,
             task: "Rewrite the function in Rust".to_string(),
             intent: "rewrite".to_string(),
+            intent_category: IntentCategory::Rewrite,
             constraints: vec!["use Rust".to_string(), "keep the same API".to_string()],
             missing_context: vec!["which specific function".to_string()],
             restructured_speech: "Please rewrite the selected function using Rust".to_string(),
@@ -467,6 +715,8 @@ mod tests {
                 strategy: ReferenceStrategy::TemporalProximity,
                 user_confirmed: false,
             }],
+            output_confidence: 0.87,
+            risk_level: RiskLevel::Low,
         };
 
         (session, output, segments, events)
@@ -488,6 +738,8 @@ mod tests {
         assert!(tables.contains(&"speak_segments".to_string()));
         assert!(tables.contains(&"action_events".to_string()));
         assert!(tables.contains(&"references_".to_string()));
+        assert!(tables.contains(&"intent_telemetry".to_string()));
+        assert!(tables.contains(&"trace_telemetry".to_string()));
     }
 
     #[test]
@@ -510,9 +762,12 @@ mod tests {
         // IntentOutput
         assert_eq!(detail.output.task, "Rewrite the function in Rust");
         assert_eq!(detail.output.intent, "rewrite");
+        assert_eq!(detail.output.intent_category, IntentCategory::Rewrite);
         assert_eq!(detail.output.constraints.len(), 2);
         assert_eq!(detail.output.missing_context.len(), 1);
         assert!(detail.output.final_markdown.contains("## Task"));
+        assert!((detail.output.output_confidence - 0.87).abs() < 0.001);
+        assert_eq!(detail.output.risk_level, RiskLevel::Low);
 
         // Artifacts round-trip
         assert_eq!(detail.output.artifacts.len(), 1);
@@ -532,6 +787,7 @@ mod tests {
         assert_eq!(detail.events[0].action_type, ActionType::SelectionText);
         assert_eq!(detail.events[0].plugin_id, "builtin");
         assert_eq!(detail.events[0].session_offset_ms, 1000);
+        assert_eq!(detail.events[0].observed_offset_ms, Some(1000));
 
         // ActionPayload JSON round-trip
         if let ActionPayload::SelectionText {
@@ -605,6 +861,103 @@ mod tests {
         assert_eq!(summaries[0].speak_segment_count, 2);
         assert_eq!(summaries[0].action_event_count, 1);
         assert!(!summaries[0].preview.is_empty());
+    }
+
+    #[test]
+    fn telemetry_tables_accept_rows() {
+        let conn = setup();
+        let repo = SessionRepo::new(&conn);
+        let (session, output, segments, events) = make_test_session();
+
+        repo.save_session(&session, &output, &segments, &events)
+            .unwrap();
+        repo.save_intent_telemetry(&IntentTelemetry {
+            session_id: session.id,
+            timestamp: 123,
+            provider_latency_ms: 456,
+            provider_success: true,
+            retry_count: 1,
+            fallback_used: false,
+            schema_valid: true,
+            repair_attempted: true,
+            output_confidence: 0.88,
+            reference_count: 1,
+            low_confidence_refs: 0,
+            intent_category: "rewrite".to_string(),
+        })
+        .unwrap();
+        repo.save_trace_telemetry(&TraceTelemetry {
+            session_id: session.id,
+            duration_ms: 1_000,
+            segment_count: 2,
+            event_count: 1,
+            capture_health: vec![],
+            event_density: 0.1,
+            alignment_anomalies: 0,
+        })
+        .unwrap();
+
+        let intent_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM intent_telemetry", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let trace_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM trace_telemetry", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(intent_count, 1);
+        assert_eq!(trace_count, 1);
+    }
+
+    #[test]
+    fn quality_overview_aggregates_recent_rows() {
+        let conn = setup();
+        let repo = SessionRepo::new(&conn);
+        let (session, output, segments, events) = make_test_session();
+
+        repo.save_session(&session, &output, &segments, &events)
+            .unwrap();
+        repo.save_intent_telemetry(&IntentTelemetry {
+            session_id: session.id,
+            timestamp: 100,
+            provider_latency_ms: 800,
+            provider_success: true,
+            retry_count: 1,
+            fallback_used: false,
+            schema_valid: true,
+            repair_attempted: true,
+            output_confidence: 0.8,
+            reference_count: 1,
+            low_confidence_refs: 0,
+            intent_category: "rewrite".to_string(),
+        })
+        .unwrap();
+        repo.save_trace_telemetry(&TraceTelemetry {
+            session_id: session.id,
+            duration_ms: 2_000,
+            segment_count: 2,
+            event_count: 1,
+            capture_health: vec![talkiwi_core::telemetry::CaptureHealthEntry {
+                capture_id: "builtin.focus".to_string(),
+                status: talkiwi_core::telemetry::CaptureStatus::PermissionDenied,
+                event_count: 0,
+                last_event_offset_ms: None,
+            }],
+            event_density: 0.5,
+            alignment_anomalies: 0,
+        })
+        .unwrap();
+
+        let overview = repo.quality_overview(10).unwrap();
+        assert_eq!(overview.intent_sessions, 1);
+        assert_eq!(overview.trace_sessions, 1);
+        assert!((overview.avg_provider_latency_ms - 800.0).abs() < f32::EPSILON);
+        assert!((overview.avg_output_confidence - 0.8).abs() < f32::EPSILON);
+        assert_eq!(overview.fallback_rate, 0.0);
+        assert_eq!(overview.degraded_trace_rate, 1.0);
+        assert!(overview.latest_intent.is_some());
+        assert!(overview.latest_trace.is_some());
     }
 
     #[test]

@@ -1,0 +1,32 @@
+{
+  "id": "001-basic-trace",
+  "description": "基础 trace telemetry 样本",
+  "telemetry": {
+    "session_id": "00000000-0000-0000-0000-000000000201",
+    "duration_ms": 10000,
+    "segment_count": 2,
+    "event_count": 4,
+    "capture_health": [
+      {
+        "capture_id": "selection",
+        "status": "active",
+        "event_count": 1,
+        "last_event_offset_ms": 3000
+      },
+      {
+        "capture_id": "click",
+        "status": "active",
+        "event_count": 2,
+        "last_event_offset_ms": 5200
+      },
+      {
+        "capture_id": "focus",
+        "status": "active",
+        "event_count": 1,
+        "last_event_offset_ms": 1200
+      }
+    ],
+    "event_density": 24.0,
+    "alignment_anomalies": 0
+  }
+}

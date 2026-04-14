@@ -37,6 +37,7 @@ pub async fn capture_screenshot(state: State<'_, AppState>) -> Result<ActionEven
             .unwrap_or_default()
             .as_millis() as u64,
         session_offset_ms: offset_ms,
+        observed_offset_ms: Some(offset_ms),
         duration_ms: None,
         action_type: ActionType::Screenshot,
         plugin_id: "builtin".to_string(),

@@ -6008,6 +6008,8 @@ dependencies = [
  "chrono",
  "clipboard-rs",
  "mime_guess",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-graphics",
  "talkiwi-core",
  "tempfile",
  "tokio",
@@ -6081,6 +6083,20 @@ dependencies = [
  "talkiwi-core",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "talkiwi-eval"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "talkiwi-core",
+ "talkiwi-engine",
+ "tokio",
  "uuid",
 ]
 

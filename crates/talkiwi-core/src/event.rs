@@ -12,6 +12,8 @@ pub enum ActionType {
     ClipboardChange,
     PageCurrent,
     ClickLink,
+    WindowFocus,
+    ClickMouse,
     FileAttach,
     /// V1.5: plugin-registered custom action types.
     Custom(String),
@@ -38,6 +40,8 @@ impl ActionType {
             Self::ClipboardChange => "clipboard.change",
             Self::PageCurrent => "page.current",
             Self::ClickLink => "click.link",
+            Self::WindowFocus => "window.focus",
+            Self::ClickMouse => "click.mouse",
             Self::FileAttach => "file.attach",
             Self::Custom(s) => s.as_str(),
         }
@@ -51,6 +55,8 @@ impl ActionType {
             "clipboard.change" => Self::ClipboardChange,
             "page.current" => Self::PageCurrent,
             "click.link" => Self::ClickLink,
+            "window.focus" => Self::WindowFocus,
+            "click.mouse" => Self::ClickMouse,
             "file.attach" => Self::FileAttach,
             other => Self::Custom(other.to_string()),
         }
@@ -98,6 +104,17 @@ pub enum ActionPayload {
         to_url: String,
         title: Option<String>,
     },
+    WindowFocus {
+        app_name: String,
+        window_title: String,
+    },
+    ClickMouse {
+        app_name: Option<String>,
+        window_title: Option<String>,
+        button: String,
+        x: f64,
+        y: f64,
+    },
     FileAttach {
         file_path: String,
         file_name: String,
@@ -115,6 +132,8 @@ pub struct ActionEvent {
     pub session_id: Uuid,
     pub timestamp: u64,
     pub session_offset_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_offset_ms: Option<u64>,
     pub duration_ms: Option<u64>,
     pub action_type: ActionType,
     pub plugin_id: String,
@@ -135,6 +154,8 @@ mod tests {
             (ActionType::ClipboardChange, "clipboard.change"),
             (ActionType::PageCurrent, "page.current"),
             (ActionType::ClickLink, "click.link"),
+            (ActionType::WindowFocus, "window.focus"),
+            (ActionType::ClickMouse, "click.mouse"),
             (ActionType::FileAttach, "file.attach"),
         ];
 
@@ -199,6 +220,7 @@ mod tests {
             session_id: Uuid::new_v4(),
             timestamp: 1712900000000,
             session_offset_ms: 5000,
+            observed_offset_ms: Some(5000),
             duration_ms: Some(100),
             action_type: ActionType::Screenshot,
             plugin_id: "builtin".to_string(),
@@ -217,5 +239,6 @@ mod tests {
         assert_eq!(deserialized.id, event.id);
         assert_eq!(deserialized.action_type, ActionType::Screenshot);
         assert_eq!(deserialized.confidence, 1.0);
+        assert_eq!(deserialized.observed_offset_ms, Some(5000));
     }
 }

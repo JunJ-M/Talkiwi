@@ -10,6 +10,10 @@ import { configGet, configUpdateMany } from "../services/config";
 import { useSettingsStore } from "./settingsStore";
 
 const mockConfig = {
+  audio: {
+    input_device_id: null,
+    input_device_name: null,
+  },
   asr: {
     active_provider: "whisper-local",
     whisper_model_path: null,

@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use talkiwi_core::event::{ActionEvent, ActionPayload, ClipboardContentType};
-use talkiwi_core::output::{ArtifactRef, IntentOutput, Reference};
+use talkiwi_core::locale::AssemblerLabels;
+use talkiwi_core::output::{ArtifactRef, IntentCategory, IntentOutput, Reference, RiskLevel};
 use talkiwi_core::traits::intent::IntentRaw;
 use uuid::Uuid;
 
@@ -9,7 +10,7 @@ use uuid::Uuid;
 ///
 /// Two modes:
 /// - **Pure voice**: no events → `final_markdown` is just the restructured speech text
-/// - **Structured**: events present → markdown with 任务/上下文/约束/期望输出/注意 sections
+/// - **Structured**: events present → markdown with locale-defined section headers
 ///
 /// Referenced events appear first in the artifact list (context-1, context-2, ...),
 /// followed by unreferenced events. No event appears twice.
@@ -18,12 +19,13 @@ pub fn assemble(
     events: &[ActionEvent],
     references: &[Reference],
     session_id: Uuid,
+    labels: &AssemblerLabels,
 ) -> IntentOutput {
     let (artifacts, markdown) = if events.is_empty() {
         (Vec::new(), assemble_pure_voice(raw))
     } else {
-        let artifacts = build_artifacts(events, references);
-        let markdown = assemble_structured(raw, events, &artifacts);
+        let artifacts = build_artifacts(events, references, labels);
+        let markdown = assemble_structured(raw, events, &artifacts, labels);
         (artifacts, markdown)
     };
 
@@ -31,6 +33,13 @@ pub fn assemble(
         session_id,
         task: raw.task.clone(),
         intent: raw.intent.clone(),
+        intent_category: IntentCategory::from_llm_output(&raw.intent),
+        output_confidence: if references.is_empty() { 0.45 } else { 0.7 },
+        risk_level: if references.is_empty() {
+            RiskLevel::High
+        } else {
+            RiskLevel::Medium
+        },
         constraints: raw.constraints.clone(),
         missing_context: raw.missing_context.clone(),
         restructured_speech: raw.restructured_speech.clone(),
@@ -48,21 +57,23 @@ fn assemble_structured(
     raw: &IntentRaw,
     events: &[ActionEvent],
     artifacts: &[ArtifactRef],
+    labels: &AssemblerLabels,
 ) -> String {
     let mut md = String::new();
 
     // Task section
-    md.push_str("## 任务\n");
+    md.push_str(&labels.section_task);
+    md.push('\n');
     md.push_str(&raw.task);
     md.push_str("\n\n");
 
     // Context section
-    md.push_str("## 上下文\n");
+    md.push_str(&labels.section_context);
+    md.push('\n');
     for artifact in artifacts {
         md.push_str(&format!("### {}\n", artifact.label));
-        // Find the event for this artifact
         if let Some(event) = events.iter().find(|e| e.id == artifact.event_id) {
-            md.push_str(&format_payload(&event.payload));
+            md.push_str(&format_payload(&event.payload, labels));
         } else {
             md.push_str(&artifact.inline_summary);
         }
@@ -72,7 +83,8 @@ fn assemble_structured(
 
     // Constraints section
     if !raw.constraints.is_empty() {
-        md.push_str("## 约束\n");
+        md.push_str(&labels.section_constraints);
+        md.push('\n');
         for c in &raw.constraints {
             md.push_str(&format!("- {}\n", c));
         }
@@ -80,13 +92,17 @@ fn assemble_structured(
     }
 
     // Expected output section
-    md.push_str("## 期望输出\n");
+    md.push_str(&labels.section_expected);
+    md.push('\n');
     md.push_str(&raw.restructured_speech);
     md.push_str("\n\n");
 
     // Notes section (missing context)
     if !raw.missing_context.is_empty() {
-        md.push_str("## 注意\n以下信息可能需要补充：\n");
+        md.push_str(&labels.section_notes);
+        md.push('\n');
+        md.push_str(&labels.notes_preamble);
+        md.push('\n');
         for m in &raw.missing_context {
             md.push_str(&format!("- {}\n", m));
         }
@@ -96,7 +112,11 @@ fn assemble_structured(
 }
 
 /// Build artifacts list: referenced events first (in order), unreferenced appended.
-fn build_artifacts(events: &[ActionEvent], references: &[Reference]) -> Vec<ArtifactRef> {
+fn build_artifacts(
+    events: &[ActionEvent],
+    references: &[Reference],
+    labels: &AssemblerLabels,
+) -> Vec<ArtifactRef> {
     let mut artifacts: Vec<ArtifactRef> = Vec::new();
     let mut used_event_ids: HashSet<Uuid> = HashSet::new();
     let mut counter = 1;
@@ -111,7 +131,7 @@ fn build_artifacts(events: &[ActionEvent], references: &[Reference]) -> Vec<Arti
                 artifacts.push(ArtifactRef {
                     event_id,
                     label: format!("context-{}", counter),
-                    inline_summary: summarize_payload(&event.payload),
+                    inline_summary: summarize_payload(&event.payload, labels),
                 });
                 counter += 1;
             }
@@ -126,7 +146,7 @@ fn build_artifacts(events: &[ActionEvent], references: &[Reference]) -> Vec<Arti
         artifacts.push(ArtifactRef {
             event_id: event.id,
             label: format!("context-{}", counter),
-            inline_summary: summarize_payload(&event.payload),
+            inline_summary: summarize_payload(&event.payload, labels),
         });
         counter += 1;
     }
@@ -135,7 +155,7 @@ fn build_artifacts(events: &[ActionEvent], references: &[Reference]) -> Vec<Arti
 }
 
 /// Format an ActionPayload into markdown for the context section.
-fn format_payload(payload: &ActionPayload) -> String {
+fn format_payload(payload: &ActionPayload, labels: &AssemblerLabels) -> String {
     match payload {
         ActionPayload::SelectionText {
             text,
@@ -144,8 +164,8 @@ fn format_payload(payload: &ActionPayload) -> String {
             ..
         } => {
             format!(
-                "**来源**: {} 中选中的文字 ({})\n```\n{}\n```\n",
-                app_name, window_title, text
+                "**{}**: {} ({})  \n```\n{}\n```\n",
+                labels.source_label, app_name, window_title, text
             )
         }
         ActionPayload::Screenshot {
@@ -154,9 +174,12 @@ fn format_payload(payload: &ActionPayload) -> String {
             height,
             ocr_text,
         } => {
-            let mut s = format!("**截图** ({}x{}): {}\n", width, height, image_path);
+            let mut s = format!(
+                "**{}** ({}x{}): {}\n",
+                labels.screenshot_label, width, height, image_path
+            );
             if let Some(ocr) = ocr_text {
-                s.push_str(&format!("OCR 文本:\n```\n{}\n```\n", ocr));
+                s.push_str(&format!("{}:\n```\n{}\n```\n", labels.ocr_text_label, ocr));
             }
             s
         }
@@ -164,11 +187,11 @@ fn format_payload(payload: &ActionPayload) -> String {
             content_type, text, ..
         } => {
             let type_str = match content_type {
-                ClipboardContentType::Text => "文本",
-                ClipboardContentType::Image => "图片",
-                ClipboardContentType::File => "文件",
+                ClipboardContentType::Text => &labels.clipboard_type_text,
+                ClipboardContentType::Image => &labels.clipboard_type_image,
+                ClipboardContentType::File => &labels.clipboard_type_file,
             };
-            let mut s = format!("**剪贴板内容** ({}):\n", type_str);
+            let mut s = format!("**{}** ({}):\n", labels.clipboard_label, type_str);
             if let Some(t) = text {
                 s.push_str(&format!("```\n{}\n```\n", t));
             }
@@ -184,11 +207,17 @@ fn format_payload(payload: &ActionPayload) -> String {
                 Some(u) => format!("[{}]({})", title, u),
                 None => title.clone(),
             };
-            format!("**当前页面**: {} ({})\n", link, app_name)
+            format!(
+                "**{}**: {} ({})\n",
+                labels.current_page_label, link, app_name
+            )
         }
         ActionPayload::ClickLink { to_url, title, .. } => {
             let title_str = title.as_deref().unwrap_or(to_url.as_str());
-            format!("**导航到**: [{}]({})\n", title_str, to_url)
+            format!(
+                "**{}**: [{}]({})\n",
+                labels.navigate_to_label, title_str, to_url
+            )
         }
         ActionPayload::FileAttach {
             file_name,
@@ -198,49 +227,89 @@ fn format_payload(payload: &ActionPayload) -> String {
             ..
         } => {
             let size_str = format_file_size(*file_size);
-            let mut s = format!("**附件**: {} ({}, {})\n", file_name, size_str, mime_type);
+            let mut s = format!(
+                "**{}**: {} ({}, {})\n",
+                labels.attachment_label, file_name, size_str, mime_type
+            );
             if let Some(p) = preview {
                 s.push_str(&format!("```\n{}\n```\n", p));
             }
             s
         }
+        ActionPayload::WindowFocus {
+            app_name,
+            window_title,
+        } => {
+            format!("**窗口焦点**: {} ({})\n", window_title, app_name)
+        }
+        ActionPayload::ClickMouse {
+            app_name,
+            window_title,
+            button,
+            x,
+            y,
+        } => {
+            let app_name = app_name.as_deref().unwrap_or("unknown");
+            let window_title = window_title.as_deref().unwrap_or("unknown");
+            format!(
+                "**鼠标点击**: {} ({:.0}, {:.0}) [{} / {}]\n",
+                button, x, y, app_name, window_title
+            )
+        }
         ActionPayload::Custom(val) => {
-            format!("**自定义事件**: {}\n", val)
+            format!("**{}**: {}\n", labels.custom_event_label, val)
         }
     }
 }
 
 /// Short summary of a payload for artifact inline_summary.
-fn summarize_payload(payload: &ActionPayload) -> String {
+fn summarize_payload(payload: &ActionPayload, labels: &AssemblerLabels) -> String {
     match payload {
         ActionPayload::SelectionText {
             app_name,
             char_count,
             ..
-        } => {
-            format!("{} 中选中的文字 ({} 字符)", app_name, char_count)
-        }
-        ActionPayload::Screenshot { width, height, .. } => {
-            format!("截图 ({}x{})", width, height)
-        }
+        } => labels
+            .selected_text_summary
+            .replace("{app}", app_name)
+            .replace("{chars}", &char_count.to_string()),
+        ActionPayload::Screenshot { width, height, .. } => labels
+            .screenshot_summary
+            .replace("{w}", &width.to_string())
+            .replace("{h}", &height.to_string()),
         ActionPayload::ClipboardChange { content_type, .. } => {
             let type_str = match content_type {
-                ClipboardContentType::Text => "文本",
-                ClipboardContentType::Image => "图片",
-                ClipboardContentType::File => "文件",
+                ClipboardContentType::Text => &labels.clipboard_type_text,
+                ClipboardContentType::Image => &labels.clipboard_type_image,
+                ClipboardContentType::File => &labels.clipboard_type_file,
             };
-            format!("剪贴板{}", type_str)
+            labels.clipboard_summary.replace("{type}", type_str)
         }
         ActionPayload::PageCurrent { title, .. } => {
-            format!("当前页面: {}", title)
+            labels.current_page_summary.replace("{title}", title)
         }
         ActionPayload::ClickLink { to_url, .. } => {
-            format!("导航到: {}", to_url)
+            labels.navigate_to_summary.replace("{url}", to_url)
         }
         ActionPayload::FileAttach { file_name, .. } => {
-            format!("附件: {}", file_name)
+            labels.attachment_summary.replace("{name}", file_name)
         }
-        ActionPayload::Custom(_) => "自定义事件".to_string(),
+        ActionPayload::WindowFocus {
+            app_name,
+            window_title,
+        } => format!("Focused {} ({})", window_title, app_name),
+        ActionPayload::ClickMouse {
+            app_name,
+            window_title,
+            button,
+            ..
+        } => format!(
+            "Mouse click {} in {} ({})",
+            button,
+            window_title.as_deref().unwrap_or("unknown"),
+            app_name.as_deref().unwrap_or("unknown")
+        ),
+        ActionPayload::Custom(_) => labels.custom_event_summary.clone(),
     }
 }
 
@@ -258,7 +327,12 @@ fn format_file_size(bytes: u64) -> String {
 mod tests {
     use super::*;
     use talkiwi_core::event::{ActionType, ClipboardContentType};
+    use talkiwi_core::locale::AssemblerLabels;
     use talkiwi_core::output::ReferenceStrategy;
+
+    fn labels() -> AssemblerLabels {
+        AssemblerLabels::default()
+    }
 
     fn make_raw(task: &str, constraints: Vec<&str>, missing: Vec<&str>) -> IntentRaw {
         IntentRaw {
@@ -267,6 +341,7 @@ mod tests {
             constraints: constraints.into_iter().map(|s| s.to_string()).collect(),
             missing_context: missing.into_iter().map(|s| s.to_string()).collect(),
             restructured_speech: "请重写选中的函数".to_string(),
+            references: vec![],
         }
     }
 
@@ -280,6 +355,7 @@ mod tests {
             session_id: Uuid::new_v4(),
             timestamp: 1712900000000,
             session_offset_ms: 3000,
+            observed_offset_ms: Some(3000),
             duration_ms: None,
             action_type,
             plugin_id: "builtin".to_string(),
@@ -304,7 +380,7 @@ mod tests {
     #[test]
     fn assemble_pure_voice_mode() {
         let raw = make_raw("重写函数", vec![], vec![]);
-        let output = assemble(&raw, &[], &[], Uuid::new_v4());
+        let output = assemble(&raw, &[], &[], Uuid::new_v4(), &labels());
 
         assert_eq!(output.final_markdown, "请重写选中的函数");
         assert!(output.artifacts.is_empty());
@@ -331,7 +407,7 @@ mod tests {
         )];
         let refs = vec![make_reference("这段代码", event_id, 0)];
 
-        let output = assemble(&raw, &events, &refs, Uuid::new_v4());
+        let output = assemble(&raw, &events, &refs, Uuid::new_v4(), &labels());
 
         assert!(output.final_markdown.contains("## 任务"));
         assert!(output.final_markdown.contains("## 上下文"));
@@ -358,7 +434,7 @@ mod tests {
             },
         )];
 
-        let output = assemble(&raw, &events, &[], Uuid::new_v4());
+        let output = assemble(&raw, &events, &[], Uuid::new_v4(), &labels());
         assert!(output.final_markdown.contains("**来源**: VSCode"));
         assert!(output.final_markdown.contains("```\nfn main()"));
     }
@@ -378,7 +454,7 @@ mod tests {
             },
         )];
 
-        let output = assemble(&raw, &events, &[], Uuid::new_v4());
+        let output = assemble(&raw, &events, &[], Uuid::new_v4(), &labels());
         assert!(output.final_markdown.contains("**截图** (1920x1080)"));
         assert!(output.final_markdown.contains("OCR 文本"));
         assert!(output.final_markdown.contains("Error: undefined"));
@@ -399,7 +475,7 @@ mod tests {
             },
         )];
 
-        let output = assemble(&raw, &events, &[], Uuid::new_v4());
+        let output = assemble(&raw, &events, &[], Uuid::new_v4(), &labels());
         assert!(output.final_markdown.contains("**剪贴板内容** (文本)"));
         assert!(output.final_markdown.contains("copied content here"));
     }
@@ -419,7 +495,7 @@ mod tests {
             },
         )];
 
-        let output = assemble(&raw, &events, &[], Uuid::new_v4());
+        let output = assemble(&raw, &events, &[], Uuid::new_v4(), &labels());
         assert!(output
             .final_markdown
             .contains("[Rust Documentation](https://docs.rs)"));
@@ -442,7 +518,7 @@ mod tests {
             },
         )];
 
-        let output = assemble(&raw, &events, &[], Uuid::new_v4());
+        let output = assemble(&raw, &events, &[], Uuid::new_v4(), &labels());
         assert!(output.final_markdown.contains("**附件**: test.rs"));
         assert!(output.final_markdown.contains("2.0 KB"));
         assert!(output.final_markdown.contains("fn test() {}"));
@@ -491,7 +567,7 @@ mod tests {
         // Reference points to event id2 (second event, index 1)
         let refs = vec![make_reference("截图", id2, 1)];
 
-        let output = assemble(&raw, &events, &refs, Uuid::new_v4());
+        let output = assemble(&raw, &events, &refs, Uuid::new_v4(), &labels());
 
         // Referenced event (id2) should be first
         assert_eq!(output.artifacts[0].event_id, id2);
@@ -514,9 +590,10 @@ mod tests {
             constraints: vec!["no breaking changes".to_string()],
             missing_context: vec!["stack trace".to_string()],
             restructured_speech: "帮我调试这个问题".to_string(),
+            references: vec![],
         };
 
-        let output = assemble(&raw, &[], &[], session_id);
+        let output = assemble(&raw, &[], &[], session_id, &labels());
 
         assert_eq!(output.session_id, session_id);
         assert_eq!(output.task, "Debug the issue");

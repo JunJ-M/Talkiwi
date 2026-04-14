@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <img src="https://raw.githubusercontent.com/JunJ-M/Talkiwi/main/assets/kiwi-sun.png" alt="Talkiwi" width="180">
+    <img src="https://raw.githubusercontent.com/JunJ-M/Talkiwi/main/assets/kiwi-sun.png" alt="Talkiwi" width="380">
   </picture>
 </p>
 
@@ -55,12 +55,12 @@
 
 ### 它解决了什么问题？
 
-| 缺口 | 示例 |
-|------|------|
-| 缺乏上下文的语音 | 你说"修一下这个" —— 模型根本不知道"这个"是什么 |
+| 缺口               | 示例                                                             |
+| ------------------ | ---------------------------------------------------------------- |
+| 缺乏上下文的语音   | 你说"修一下这个" —— 模型根本不知道"这个"是什么                   |
 | 缺乏操作证据的转录 | 你刚才选中了代码、截了图、开了个 Issue —— 这些信息都没有传给模型 |
 | 缺乏重组的原始口语 | 人类口语中有大量语气词、代词跳转和重复纠正 —— 不适合直接喂给 LLM |
-| 封闭的上下文模型 | 编程、写作和研究需要完全不同的上下文轨道 |
+| 封闭的上下文模型   | 编程、写作和研究需要完全不同的上下文轨道                         |
 
 ### 它输出什么？
 
@@ -95,25 +95,25 @@
 
 ## 功能特性（V1 Alpha）
 
-| # | 功能 | 归属轨道 |
-|---|------|---------|
-| 1 | 小组件按钮开始/停止捕获 | 核心 |
-| 2 | 通过 Whisper 实现本地 ASR（whisper.cpp / mlx-whisper） | 语音 |
-| 3 | 云端 ASR 选项（Deepgram / OpenAI Whisper API） | 语音 |
-| 4 | 选中文本注入 | 产物 |
-| 5 | 应用内截图工具（支持区域选择） | 产物 |
-| 6 | 当前 URL + 页面标题注入 | 产物 |
-| 7 | 剪贴板内容注入 | 产物 |
-| 8 | 文件拖入注入 | 产物 |
-| 9 | 意图编译器（默认本地 LLM，云端可选） | 核心 |
-| 10 | **自动代词解析**（"这个"/"那个" → 最近的产物） | 核心 |
-| 11 | 结构化 Markdown 输出生成 | 核心 |
-| 12 | 可折叠常驻侧边栏面板 | UI |
-| 13 | 多轨道时间线查看器 | UI |
-| 14 | 一键复制到剪贴板 | UI |
-| 15 | 会话自动保存到本地文件 | 存储 |
-| 16 | 会话历史浏览器 | 存储 |
-| 17 | Provider 设置（本地 ↔ 云端切换） | 设置 |
+| #   | 功能                                                   | 归属轨道 |
+| --- | ------------------------------------------------------ | -------- |
+| 1   | 小组件按钮开始/停止捕获                                | 核心     |
+| 2   | 通过 Whisper 实现本地 ASR（whisper.cpp / mlx-whisper） | 语音     |
+| 3   | 云端 ASR 选项（Deepgram / OpenAI Whisper API）         | 语音     |
+| 4   | 选中文本注入                                           | 产物     |
+| 5   | 应用内截图工具（支持区域选择）                         | 产物     |
+| 6   | 当前 URL + 页面标题注入                                | 产物     |
+| 7   | 剪贴板内容注入                                         | 产物     |
+| 8   | 文件拖入注入                                           | 产物     |
+| 9   | 意图编译器（默认本地 LLM，云端可选）                   | 核心     |
+| 10  | **自动代词解析**（"这个"/"那个" → 最近的产物）         | 核心     |
+| 11  | 结构化 Markdown 输出生成                               | 核心     |
+| 12  | 可折叠常驻侧边栏面板                                   | UI       |
+| 13  | 多轨道时间线查看器                                     | UI       |
+| 14  | 一键复制到剪贴板                                       | UI       |
+| 15  | 会话自动保存到本地文件                                 | 存储     |
+| 16  | 会话历史浏览器                                         | 存储     |
+| 17  | Provider 设置（本地 ↔ 云端切换）                       | 设置     |
 
 ---
 
@@ -149,14 +149,14 @@ Talkiwi 基于 **Tauri 2.0** 构建，采用 Rust 后端和 React 前端。
 
 ### 技术栈
 
-| 层级 | 选型 | 理由 |
-|------|------|------|
-| 应用壳 | **Tauri 2.0**（Rust + WebView） | 包体约 10 MB，可访问 macOS 原生 API，性能优秀 |
-| 前端 | React + TypeScript | 迭代快，时间轴/Markdown 组件生态丰富 |
-| ASR | whisper.cpp / mlx-whisper | 本地优先，针对 Apple Silicon 优化 |
-| 意图编译器 | Ollama + 小型模型（Qwen2.5-7B、Phi-3） | 本地优先，Provider 可切换 |
-| 存储 | SQLite（rusqlite） | 会话历史和事件存储 |
-| IPC | Tauri commands + 事件系统 | Rust ↔ 前端通信 |
+| 层级       | 选型                                   | 理由                                          |
+| ---------- | -------------------------------------- | --------------------------------------------- |
+| 应用壳     | **Tauri 2.0**（Rust + WebView）        | 包体约 10 MB，可访问 macOS 原生 API，性能优秀 |
+| 前端       | React + TypeScript                     | 迭代快，时间轴/Markdown 组件生态丰富          |
+| ASR        | whisper.cpp / mlx-whisper              | 本地优先，针对 Apple Silicon 优化             |
+| 意图编译器 | Ollama + 小型模型（Qwen2.5-7B、Phi-3） | 本地优先，Provider 可切换                     |
+| 存储       | SQLite（rusqlite）                     | 会话历史和事件存储                            |
+| IPC        | Tauri commands + 事件系统              | Rust ↔ 前端通信                               |
 
 ### Crate 结构
 
@@ -178,7 +178,7 @@ crates/
 
 - macOS 13 Ventura 或更高版本
 - Rust 1.78+（`rustup install stable`）
-- Node.js 20+ 和 pnpm（`npm i -g pnpm`）
+- Node.js 20+ 和 npm 10+
 - [Ollama](https://ollama.ai/)（用于本地意图编译）
 
 ### 安装步骤
@@ -189,31 +189,48 @@ git clone https://github.com/JunJ-M/Talkiwi.git
 cd Talkiwi
 
 # 2. 安装前端依赖
-pnpm install
+npm ci --prefix apps/desktop
 
 # 3. 拉取本地意图编译模型
 ollama pull qwen2.5:7b
 
 # 4. 以开发模式运行
-pnpm tauri dev
+npm --prefix apps/desktop run tauri -- dev
 ```
 
 ### 构建正式版 DMG
 
 ```bash
-pnpm tauri build
+npm --prefix apps/desktop run tauri -- build
 # 输出位置：apps/desktop/src-tauri/target/release/bundle/dmg/
 ```
+
+## 发布与运维入口
+
+仓库现在已经补齐了公开桌面 Alpha 所需的发布与分发骨架。
+
+- [下载页](./website/index.html)
+- [GitHub Pages 站点](https://junj-m.github.io/Talkiwi/)（在仓库设置里启用 Pages 后可访问）
+- [站点源码](./website/index.html)
+- [GitHub Releases](https://github.com/JunJ-M/Talkiwi/releases)
+- [更新日志](./CHANGELOG.md)
+- [贡献指南](./CONTRIBUTING.md)
+- [路线图](./ROADMAP.md)
+- [安装与权限说明](./docs/guides/installation-and-permissions.md)
+- [发布手册](./docs/guides/release-playbook.md)
+- [兼容性与支持矩阵](./docs/guides/compatibility-and-support.md)
+- [运维与可观测性](./docs/guides/operations-and-observability.md)
+- [上线素材清单](./docs/guides/launch-assets-checklist.md)
 
 ### macOS 权限说明
 
 Talkiwi 在首次启动时需要以下 macOS 权限：
 
-| 权限 | 用途 |
-|------|------|
-| 麦克风 | 语音捕获 |
-| 屏幕录制 | 截图工具 |
-| 辅助功能 | 文本选区捕获 |
+| 权限           | 用途            |
+| -------------- | --------------- |
+| 麦克风         | 语音捕获        |
+| 屏幕录制       | 截图工具        |
+| 辅助功能       | 文本选区捕获    |
 | 自动化（可选） | 浏览器 URL 检测 |
 
 每项权限仅在首次使用时请求 —— Talkiwi 会通过引导向导带你完成设置。
@@ -254,11 +271,11 @@ Talkiwi 在设计上**以本地为优先**：
 
 ## 路线图
 
-| 版本 | 范围 |
-|------|------|
-| **V1 Alpha**（当前） | 核心捕获、ASR、意图编译、侧边栏 UI、会话历史 |
-| **V1.5** | 带有轨道声明 API 的插件 SDK、IDE / 终端 / Git 插件、提示词模板 |
-| **V2** | 环境感知（持续捕获）模式、自动场景识别、跨会话智能召回、团队协作 |
+| 版本                 | 范围                                                             |
+| -------------------- | ---------------------------------------------------------------- |
+| **V1 Alpha**（当前） | 核心捕获、ASR、意图编译、侧边栏 UI、会话历史                     |
+| **V1.5**             | 带有轨道声明 API 的插件 SDK、IDE / 终端 / Git 插件、提示词模板   |
+| **V2**               | 环境感知（持续捕获）模式、自动场景识别、跨会话智能召回、团队协作 |
 
 ---
 
@@ -267,15 +284,14 @@ Talkiwi 在设计上**以本地为优先**：
 欢迎贡献代码！请在开启 Pull Request 之前阅读 [贡献指南](./CONTRIBUTING.md)。
 
 ```bash
-# 运行 Rust 测试
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
-# 运行前端测试
-pnpm --filter desktop test
-
-# 代码检查
-cargo clippy --workspace
-pnpm --filter desktop lint
+npm --prefix apps/desktop run typecheck
+npm --prefix apps/desktop run test
+npm --prefix apps/desktop run build
+bash scripts/check-release-readiness.sh
 ```
 
 如果计划实现一个重要功能或进行架构调整，请先开 Issue 进行讨论。

@@ -4,12 +4,16 @@
 //! and provides `inject_event()` for externally-triggered events
 //! (screenshots, file drops).
 
+use std::collections::HashMap;
 use std::sync::Arc;
+
 use tokio::sync::{mpsc, Mutex};
-use tokio::time::Instant;
 use tracing::{info, warn};
 
+use talkiwi_core::clock::SessionClock;
 use talkiwi_core::event::ActionEvent;
+use talkiwi_core::preview::PreviewEvent;
+use talkiwi_core::telemetry::{CaptureHealthEntry, CaptureStatus};
 use talkiwi_core::traits::capture::{ActionCapture, PermissionStatus};
 
 /// ActionTrack manages the lifecycle of multiple ActionCapture instances
@@ -17,24 +21,32 @@ use talkiwi_core::traits::capture::{ActionCapture, PermissionStatus};
 pub struct ActionTrack {
     captures: Vec<Box<dyn ActionCapture>>,
     events: Arc<Mutex<Vec<ActionEvent>>>,
-    session_start: Option<Instant>,
+    clock: SessionClock,
     event_tx: Option<mpsc::Sender<ActionEvent>>,
+    preview_tx: Option<mpsc::Sender<PreviewEvent>>,
     /// Internal aggregation sender — dropped on stop to signal the aggregator.
     agg_tx: Option<mpsc::Sender<ActionEvent>>,
     /// Aggregator task handle — joined on stop.
     agg_handle: Option<tokio::task::JoinHandle<()>>,
+    capture_health: Arc<Mutex<HashMap<String, CaptureHealthEntry>>>,
 }
 
 impl ActionTrack {
     /// Create a new empty ActionTrack.
     pub fn new() -> Self {
+        Self::with_clock(SessionClock::new())
+    }
+
+    pub fn with_clock(clock: SessionClock) -> Self {
         Self {
             captures: Vec::new(),
             events: Arc::new(Mutex::new(Vec::new())),
-            session_start: None,
+            clock,
             event_tx: None,
+            preview_tx: None,
             agg_tx: None,
             agg_handle: None,
+            capture_health: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -47,79 +59,151 @@ impl ActionTrack {
     /// Start all registered captures. Permission-denied captures are skipped.
     ///
     /// Events from all captures are aggregated and forwarded to `event_tx`.
-    pub fn start(&mut self, event_tx: mpsc::Sender<ActionEvent>) -> anyhow::Result<()> {
-        self.session_start = Some(Instant::now());
+    pub async fn start(
+        &mut self,
+        event_tx: mpsc::Sender<ActionEvent>,
+        clock: SessionClock,
+        preview_tx: Option<mpsc::Sender<PreviewEvent>>,
+    ) -> anyhow::Result<()> {
+        self.clock = clock.clone();
         self.event_tx = Some(event_tx.clone());
+        self.preview_tx = preview_tx.clone();
+        self.events.lock().await.clear();
+        self.capture_health.lock().await.clear();
 
         let events = Arc::clone(&self.events);
+        let health_state = Arc::clone(&self.capture_health);
+        let mut initial_health = Vec::new();
 
-        // Create an internal aggregation channel
         let (agg_tx, mut agg_rx) = mpsc::channel::<ActionEvent>(256);
 
-        // Start each capture that has permission
         for capture in &mut self.captures {
-            let perm = capture.check_permission();
-            match perm {
+            let capture_id = capture.id().to_string();
+            let permission = capture.check_permission();
+            match permission {
                 PermissionStatus::Granted | PermissionStatus::NotRequired => {
-                    if let Err(e) = capture.start(agg_tx.clone()) {
+                    if let Err(error) = capture.start(agg_tx.clone(), clock.clone()) {
                         warn!(
                             capture_id = capture.id(),
-                            error = %e,
+                            error = %error,
                             "failed to start capture, skipping"
                         );
+                        initial_health.push(CaptureHealthEntry {
+                            capture_id,
+                            status: CaptureStatus::Error,
+                            event_count: 0,
+                            last_event_offset_ms: None,
+                        });
                     } else {
+                        initial_health.push(CaptureHealthEntry {
+                            capture_id,
+                            status: CaptureStatus::Active,
+                            event_count: 0,
+                            last_event_offset_ms: None,
+                        });
                         info!(capture_id = capture.id(), "started action capture");
                     }
                 }
-                PermissionStatus::Denied | PermissionStatus::NotDetermined => {
-                    warn!(
-                        capture_id = capture.id(),
-                        permission = ?perm,
-                        "capture permission not granted, skipping"
-                    );
+                PermissionStatus::Denied => {
+                    initial_health.push(CaptureHealthEntry {
+                        capture_id,
+                        status: CaptureStatus::PermissionDenied,
+                        event_count: 0,
+                        last_event_offset_ms: None,
+                    });
+                }
+                PermissionStatus::NotDetermined => {
+                    initial_health.push(CaptureHealthEntry {
+                        capture_id,
+                        status: CaptureStatus::NotStarted,
+                        event_count: 0,
+                        last_event_offset_ms: None,
+                    });
                 }
             }
         }
 
-        // Store agg_tx so dropping it on stop signals the aggregator
+        {
+            let mut guard = self.capture_health.lock().await;
+            for entry in initial_health {
+                guard.insert(entry.capture_id.clone(), entry);
+            }
+        }
+
         self.agg_tx = Some(agg_tx);
 
-        // Spawn aggregator task: collect events, store, and forward
         let forward_tx = event_tx;
+        let preview_tx_clone = preview_tx;
         let handle = tokio::spawn(async move {
             while let Some(event) = agg_rx.recv().await {
                 events.lock().await.push(event.clone());
-                // Forward to external listener (frontend), ignore send errors
-                let _ = forward_tx.send(event).await;
+                {
+                    let mut guard = health_state.lock().await;
+                    let entry =
+                        guard
+                            .entry(event.plugin_id.clone())
+                            .or_insert(CaptureHealthEntry {
+                                capture_id: event.plugin_id.clone(),
+                                status: CaptureStatus::Active,
+                                event_count: 0,
+                                last_event_offset_ms: None,
+                            });
+                    entry.status = CaptureStatus::Active;
+                    entry.event_count += 1;
+                    entry.last_event_offset_ms = Some(event.session_offset_ms);
+                }
+
+                let _ = forward_tx.send(event.clone()).await;
+
+                if let Some(preview_tx) = &preview_tx_clone {
+                    let _ = preview_tx
+                        .send(PreviewEvent::ActionOccurred {
+                            id: event.id.to_string(),
+                            offset_ms: event.session_offset_ms,
+                            action_type: event.action_type.as_str().to_string(),
+                        })
+                        .await;
+
+                    let health = {
+                        let guard = health_state.lock().await;
+                        guard.values().cloned().collect::<Vec<_>>()
+                    };
+                    let _ = preview_tx
+                        .send(PreviewEvent::CaptureHealthUpdated(health))
+                        .await;
+                }
             }
         });
         self.agg_handle = Some(handle);
+
+        if let Some(preview_tx) = &self.preview_tx {
+            let snapshot = self.capture_health.lock().await.values().cloned().collect();
+            let _ = preview_tx
+                .send(PreviewEvent::CaptureHealthUpdated(snapshot))
+                .await;
+        }
 
         Ok(())
     }
 
     /// Stop all captures and return collected events.
-    ///
-    /// Capture `stop()` calls are run via `spawn_blocking` since polling
-    /// thread joins may block for up to one poll interval.
     pub async fn stop(&mut self) -> anyhow::Result<Vec<ActionEvent>> {
-        // Take captures out to stop them in spawn_blocking (avoids blocking executor)
         let mut captures = std::mem::take(&mut self.captures);
-        tokio::task::spawn_blocking(move || {
+        captures = tokio::task::spawn_blocking(move || {
             for capture in &mut captures {
-                if let Err(e) = capture.stop() {
-                    warn!(capture_id = capture.id(), error = %e, "error stopping capture");
+                if let Err(error) = capture.stop() {
+                    warn!(capture_id = capture.id(), error = %error, "error stopping capture");
                 }
             }
+            captures
         })
         .await?;
+        self.captures = captures;
 
         self.event_tx = None;
-
-        // Drop the aggregation sender to signal the aggregator task to finish
+        self.preview_tx = None;
         self.agg_tx = None;
 
-        // Wait for the aggregator to flush remaining events
         if let Some(handle) = self.agg_handle.take() {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
         }
@@ -129,30 +213,76 @@ impl ActionTrack {
     }
 
     /// Inject an externally-triggered event (screenshot, file drop).
-    ///
-    /// Updates `session_offset_ms` based on elapsed time, stores the event,
-    /// and forwards it to the event channel for real-time display.
     pub async fn inject_event(&self, mut event: ActionEvent) -> anyhow::Result<()> {
-        if let Some(start) = self.session_start {
-            event.session_offset_ms = start.elapsed().as_millis() as u64;
-        }
+        let offset_ms = self.clock.elapsed_ms();
+        event.session_offset_ms = offset_ms;
+        event.observed_offset_ms = Some(offset_ms);
         self.events.lock().await.push(event.clone());
+        self.bump_health(&event.plugin_id, offset_ms).await;
+
         if let Some(tx) = &self.event_tx {
-            tx.send(event).await.ok();
+            tx.send(event.clone()).await.ok();
+        }
+        if let Some(preview_tx) = &self.preview_tx {
+            preview_tx
+                .send(PreviewEvent::ActionOccurred {
+                    id: event.id.to_string(),
+                    offset_ms,
+                    action_type: event.action_type.as_str().to_string(),
+                })
+                .await
+                .ok();
         }
         Ok(())
     }
 
     /// Get elapsed time since session start in milliseconds.
     pub fn elapsed_ms(&self) -> u64 {
-        self.session_start
-            .map(|s| s.elapsed().as_millis() as u64)
-            .unwrap_or(0)
+        self.clock.elapsed_ms()
+    }
+
+    pub async fn capture_health(&self) -> Vec<CaptureHealthEntry> {
+        let elapsed_ms = self.clock.elapsed_ms();
+        let mut entries = self
+            .capture_health
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for entry in &mut entries {
+            if matches!(entry.status, CaptureStatus::Active) {
+                let stale = match entry.last_event_offset_ms {
+                    Some(last_event) => elapsed_ms.saturating_sub(last_event) > 30_000,
+                    None => elapsed_ms > 30_000,
+                };
+                if stale {
+                    entry.status = CaptureStatus::Stale;
+                }
+            }
+        }
+        entries.sort_by(|left, right| left.capture_id.cmp(&right.capture_id));
+        entries
     }
 
     /// Get number of registered captures.
     pub fn capture_count(&self) -> usize {
         self.captures.len()
+    }
+
+    async fn bump_health(&self, capture_id: &str, offset_ms: u64) {
+        let mut guard = self.capture_health.lock().await;
+        let entry = guard
+            .entry(capture_id.to_string())
+            .or_insert(CaptureHealthEntry {
+                capture_id: capture_id.to_string(),
+                status: CaptureStatus::Active,
+                event_count: 0,
+                last_event_offset_ms: None,
+            });
+        entry.status = CaptureStatus::Active;
+        entry.event_count += 1;
+        entry.last_event_offset_ms = Some(offset_ms);
     }
 }
 
@@ -194,7 +324,11 @@ mod tests {
             &[ActionType::ClipboardChange]
         }
 
-        fn start(&mut self, _tx: mpsc::Sender<ActionEvent>) -> anyhow::Result<()> {
+        fn start(
+            &mut self,
+            _tx: mpsc::Sender<ActionEvent>,
+            _clock: SessionClock,
+        ) -> anyhow::Result<()> {
             self.started = true;
             Ok(())
         }
@@ -209,7 +343,6 @@ mod tests {
         }
     }
 
-    /// Mock capture that sends events on start.
     struct EventEmittingCapture {
         id: String,
         events_to_emit: Vec<ActionEvent>,
@@ -233,7 +366,11 @@ mod tests {
             &[ActionType::ClipboardChange]
         }
 
-        fn start(&mut self, tx: mpsc::Sender<ActionEvent>) -> anyhow::Result<()> {
+        fn start(
+            &mut self,
+            tx: mpsc::Sender<ActionEvent>,
+            _clock: SessionClock,
+        ) -> anyhow::Result<()> {
             let events = self.events_to_emit.clone();
             tokio::spawn(async move {
                 for event in events {
@@ -258,9 +395,10 @@ mod tests {
             session_id,
             timestamp: 1712900000000,
             session_offset_ms: 0,
+            observed_offset_ms: Some(0),
             duration_ms: None,
             action_type: ActionType::ClipboardChange,
-            plugin_id: "builtin".to_string(),
+            plugin_id: "builtin.clipboard".to_string(),
             payload: ActionPayload::ClipboardChange {
                 content_type: talkiwi_core::event::ClipboardContentType::Text,
                 text: Some("test clipboard".to_string()),
@@ -297,12 +435,12 @@ mod tests {
         )));
 
         let (tx, _rx) = mpsc::channel(16);
-        track.start(tx).unwrap();
+        track.start(tx, SessionClock::new(), None).await.unwrap();
 
-        assert!(track.elapsed_ms() < 100); // Just started
+        assert!(track.elapsed_ms() < 100);
 
         let events = track.stop().await.unwrap();
-        assert!(events.is_empty()); // No events emitted by MockCapture
+        assert!(events.is_empty());
     }
 
     #[tokio::test]
@@ -316,18 +454,14 @@ mod tests {
             "denied",
             PermissionStatus::Denied,
         )));
-        track.register(Box::new(MockCapture::new(
-            "not_determined",
-            PermissionStatus::NotDetermined,
-        )));
-        track.register(Box::new(MockCapture::new(
-            "not_required",
-            PermissionStatus::NotRequired,
-        )));
 
         let (tx, _rx) = mpsc::channel(16);
-        // Should not error — denied captures are skipped
-        track.start(tx).unwrap();
+        track.start(tx, SessionClock::new(), None).await.unwrap();
+        let health = track.capture_health().await;
+        assert!(health.iter().any(|entry| entry.capture_id == "granted"));
+        assert!(health
+            .iter()
+            .any(|entry| entry.status == CaptureStatus::PermissionDenied));
         track.stop().await.unwrap();
     }
 
@@ -335,18 +469,15 @@ mod tests {
     async fn action_track_inject_event_stores_and_forwards() {
         let mut track = ActionTrack::new();
         let (tx, mut rx) = mpsc::channel(16);
-        track.start(tx).unwrap();
+        track.start(tx, SessionClock::new(), None).await.unwrap();
 
         let session_id = Uuid::new_v4();
         let event = make_test_event(session_id);
         track.inject_event(event.clone()).await.unwrap();
 
-        // Event should be forwarded to the channel
         let received = rx.recv().await.unwrap();
         assert_eq!(received.id, event.id);
         assert_eq!(received.session_id, session_id);
-        // session_offset_ms should be updated (>= 0)
-        // (it's near 0 since we just started)
 
         let events = track.stop().await.unwrap();
         assert_eq!(events.len(), 1);
@@ -360,14 +491,13 @@ mod tests {
 
         let mut track = ActionTrack::new();
         track.register(Box::new(EventEmittingCapture::new(
-            "emitter",
+            "builtin.clipboard",
             test_events.clone(),
         )));
 
         let (tx, mut rx) = mpsc::channel(16);
-        track.start(tx).unwrap();
+        track.start(tx, SessionClock::new(), None).await.unwrap();
 
-        // Wait for events to arrive
         let mut received = Vec::new();
         for _ in 0..2 {
             if let Some(event) =
@@ -387,18 +517,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn action_track_stop_preserves_captures_for_followup_sessions() {
+        let session_id = Uuid::new_v4();
+        let test_events = vec![make_test_event(session_id)];
+
+        let mut track = ActionTrack::new();
+        track.register(Box::new(EventEmittingCapture::new(
+            "builtin.clipboard",
+            test_events.clone(),
+        )));
+
+        let (tx1, mut rx1) = mpsc::channel(16);
+        track.start(tx1, SessionClock::new(), None).await.unwrap();
+        let first = tokio::time::timeout(std::time::Duration::from_millis(500), rx1.recv())
+            .await
+            .ok()
+            .flatten();
+        assert!(first.is_some());
+        let _ = track.stop().await.unwrap();
+
+        let (tx2, mut rx2) = mpsc::channel(16);
+        track.start(tx2, SessionClock::new(), None).await.unwrap();
+        let second = tokio::time::timeout(std::time::Duration::from_millis(500), rx2.recv())
+            .await
+            .ok()
+            .flatten();
+        assert!(second.is_some());
+        let _ = track.stop().await.unwrap();
+        assert_eq!(track.capture_count(), 1);
+    }
+
+    #[tokio::test]
     async fn action_track_inject_without_start_still_works() {
         let track = ActionTrack::new();
-        let session_id = Uuid::new_v4();
-        let event = make_test_event(session_id);
-
-        // inject_event should work even without start (no forwarding, just stores)
+        let event = make_test_event(Uuid::new_v4());
         track.inject_event(event).await.unwrap();
     }
 
     #[test]
     fn action_track_elapsed_zero_before_start() {
         let track = ActionTrack::new();
-        assert_eq!(track.elapsed_ms(), 0);
+        assert!(track.elapsed_ms() < 20);
     }
 }

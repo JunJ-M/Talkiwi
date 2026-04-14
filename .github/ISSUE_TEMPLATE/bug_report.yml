@@ -1,0 +1,61 @@
+name: Bug Report
+description: Report a reproducible defect in Talkiwi desktop or release flow.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What broke, and what did you expect instead?
+      placeholder: Recording succeeds, but the editor never opens after stop.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Provide the shortest reliable reproduction.
+      placeholder: |
+        1. Launch Talkiwi
+        2. Start a session
+        3. Stop recording after 10 seconds
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS Apple Silicon
+        - macOS Intel
+        - Other / unsupported
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Include app version, permission state, provider settings, and relevant logs or screenshots.
+      placeholder: |
+        Version: v0.1.0-alpha.1
+        ASR provider: whisper-local
+        Intent provider: ollama
+        Permissions: microphone granted, accessibility denied
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues first.
+          required: true
+        - label: I can still reproduce this on the latest main branch or latest tagged release.
+          required: true

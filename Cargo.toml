@@ -7,6 +7,7 @@ members = [
     "crates/talkiwi-capture",
     "crates/talkiwi-engine",
     "crates/talkiwi-db",
+    "crates/talkiwi-eval",
     "apps/desktop/src-tauri",
 ]
 

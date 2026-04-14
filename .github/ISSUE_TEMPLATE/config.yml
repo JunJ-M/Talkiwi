@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Installation and Permissions Guide
+    url: https://github.com/JunJ-M/Talkiwi/blob/main/docs/guides/installation-and-permissions.md
+    about: Read this first for install, Gatekeeper, and macOS privacy setup questions.
+  - name: Release Playbook
+    url: https://github.com/JunJ-M/Talkiwi/blob/main/docs/guides/release-playbook.md
+    about: Use this when preparing a tag, signing, notarization, or release asset upload.

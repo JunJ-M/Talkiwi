@@ -1,0 +1,6 @@
+{
+  "expected_event_count": 4,
+  "expected_segment_count": 2,
+  "degraded": false,
+  "max_alignment_anomalies": 0
+}

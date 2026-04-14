@@ -11,6 +11,8 @@ const ACTION_ICONS: Record<string, string> = {
   "page.current": "P",
   "click.link": "L",
   "file.attach": "F",
+  "window.focus": "W",
+  "click.mouse": "M",
 };
 
 function formatOffset(ms: number): string {
@@ -21,19 +23,24 @@ function formatOffset(ms: number): string {
 }
 
 function getDetail(event: ActionEvent): string {
+  const p = event.payload as Record<string, unknown>;
   switch (event.action_type) {
     case "selection.text":
-      return event.payload.text;
+      return (p.text as string) ?? "";
     case "screenshot":
-      return event.payload.image_path;
+      return (p.image_path as string) ?? "";
     case "clipboard.change":
-      return event.payload.text ?? event.payload.file_path ?? "Clipboard changed";
+      return (p.text as string) ?? (p.file_path as string) ?? "Clipboard changed";
     case "page.current":
-      return event.payload.url ?? event.payload.title;
+      return (p.url as string) ?? (p.title as string) ?? "";
     case "click.link":
-      return event.payload.to_url;
+      return (p.to_url as string) ?? "";
     case "file.attach":
-      return event.payload.file_name;
+      return (p.file_name as string) ?? "";
+    case "window.focus":
+      return `${(p.window_title as string) ?? ""} ${(p.app_name as string) ?? ""}`.trim();
+    case "click.mouse":
+      return `${(p.button as string) ?? "click"} @ ${Math.round((p.x as number) ?? 0)},${Math.round((p.y as number) ?? 0)}`;
     default:
       return event.semantic_hint ?? event.action_type;
   }

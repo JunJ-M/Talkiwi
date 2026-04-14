@@ -13,10 +13,13 @@ use tokio::sync::Mutex;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use talkiwi_core::clock::SessionClock;
 use talkiwi_core::error::TalkiwiError;
 use talkiwi_core::event::ActionEvent;
 use talkiwi_core::output::IntentOutput;
+use talkiwi_core::preview::PreviewEvent;
 use talkiwi_core::session::{Session, SessionState, SpeakSegment};
+use talkiwi_core::telemetry::{CaptureHealthEntry, TraceTelemetry};
 use talkiwi_db::SessionRepo;
 use talkiwi_engine::IntentEngine;
 use talkiwi_track::{ActionTrack, SpeakTrack};
@@ -33,6 +36,8 @@ pub struct SessionManager {
     /// Uses `std::sync::Mutex` because `Connection` is `!Send`.
     /// All DB operations run in `spawn_blocking` to avoid blocking the executor.
     db: Arc<std::sync::Mutex<Connection>>,
+    current_clock: Mutex<Option<SessionClock>>,
+    preview_tx: Mutex<Option<mpsc::Sender<PreviewEvent>>>,
 }
 
 impl SessionManager {
@@ -49,6 +54,8 @@ impl SessionManager {
             action_track: Mutex::new(action_track),
             engine,
             db,
+            current_clock: Mutex::new(None),
+            preview_tx: Mutex::new(None),
         }
     }
 
@@ -62,6 +69,8 @@ impl SessionManager {
         &self,
         speak_tx: mpsc::Sender<SpeakSegment>,
         action_tx: mpsc::Sender<ActionEvent>,
+        preview_tx: Option<mpsc::Sender<PreviewEvent>>,
+        clock: SessionClock,
         asr_provider: Box<dyn talkiwi_core::traits::asr::AsrProvider>,
         output_dir: Option<PathBuf>,
         input_gain_db: f32,
@@ -90,6 +99,8 @@ impl SessionManager {
         };
 
         *self.current_session.lock().await = Some(session);
+        *self.current_clock.lock().await = Some(clock.clone());
+        *self.preview_tx.lock().await = preview_tx.clone();
 
         // Prepare audio recording directory
         let audio_dir = output_dir.map(|dir| {
@@ -103,22 +114,34 @@ impl SessionManager {
         // Start SpeakTrack
         {
             let mut speak = self.speak_track.lock().await;
-            speak
-                .start(speak_tx, asr_provider, audio_dir, input_gain_db)
+            if let Err(error) = speak
+                .start(
+                    speak_tx,
+                    preview_tx.clone(),
+                    asr_provider,
+                    audio_dir,
+                    input_gain_db,
+                )
                 .await
-                .map_err(|e| TalkiwiError::AsrFailed(e.to_string()))?;
+            {
+                self.reset_after_start_failure().await;
+                return Err(TalkiwiError::AsrFailed(error.to_string()));
+            }
         }
 
         // Start ActionTrack (synchronous — does not block executor)
         {
             let mut action = self.action_track.lock().await;
-            action
-                .start(action_tx)
-                .map_err(|e| TalkiwiError::CaptureFailed {
+            if let Err(error) = action.start(action_tx, clock, preview_tx).await {
+                self.reset_after_start_failure().await;
+                return Err(TalkiwiError::CaptureFailed {
                     module: "action_track".into(),
-                    reason: e.to_string(),
-                })?;
+                    reason: error.to_string(),
+                });
+            }
         }
+
+        self.emit_preview_state(SessionState::Recording).await;
 
         info!(session_id = %session_id, "session started");
         Ok(session_id)
@@ -134,6 +157,7 @@ impl SessionManager {
             }
             *state = SessionState::Processing;
         }
+        self.emit_preview_state(SessionState::Processing).await;
         info!("session stopping, state → Processing");
 
         // Stop both tracks
@@ -147,15 +171,17 @@ impl SessionManager {
         let segments = speak_result.segments;
         let audio_path = speak_result.audio_path;
 
-        let events = {
+        let (capture_health, events) = {
             let mut action = self.action_track.lock().await;
-            action
+            let capture_health = action.capture_health().await;
+            let events = action
                 .stop()
                 .await
                 .map_err(|e| TalkiwiError::CaptureFailed {
                     module: "action_track".into(),
                     reason: e.to_string(),
-                })?
+                })?;
+            (capture_health, events)
         };
 
         // Get session info
@@ -168,9 +194,9 @@ impl SessionManager {
         };
 
         // Process through engine
-        let output = self
+        let (output, intent_telemetry) = self
             .engine
-            .process(&segments, &events, session_id)
+            .process_with_telemetry(&segments, &events, session_id)
             .await
             .map_err(|e| TalkiwiError::IntentFailed(e.to_string()))?;
 
@@ -189,6 +215,14 @@ impl SessionManager {
             session
         };
 
+        let trace_telemetry = build_trace_telemetry(
+            session.id,
+            session.duration_ms.unwrap_or_default(),
+            &segments,
+            &events,
+            capture_health.clone(),
+        );
+
         // Persist to DB via spawn_blocking (Connection is !Send).
         // Single-user app: blocking pool exhaustion is not a concern.
         let db = Arc::clone(&self.db);
@@ -197,29 +231,38 @@ impl SessionManager {
         let segments_c = segments;
         let events_c = events;
         let audio_path_str = audio_path.map(|p| p.to_string_lossy().to_string());
-        let db_result = tokio::task::spawn_blocking(move || {
-            let db = db
-                .lock()
-                .map_err(|e| TalkiwiError::Storage(format!("DB lock poisoned: {}", e)))?;
-            let repo = SessionRepo::new(&db);
-            repo.save_session_with_audio(
-                &session_c,
-                &output_c,
-                &segments_c,
-                &events_c,
-                audio_path_str.as_deref(),
-            )
-        })
-        .await
-        .map_err(|e| TalkiwiError::Storage(format!("spawn_blocking failed: {}", e)))?;
+        let db_result: Result<(), TalkiwiError> =
+            tokio::task::spawn_blocking(move || -> Result<(), TalkiwiError> {
+                let db = db
+                    .lock()
+                    .map_err(|e| TalkiwiError::Storage(format!("DB lock poisoned: {}", e)))?;
+                let repo = SessionRepo::new(&db);
+                repo.save_session_with_audio(
+                    &session_c,
+                    &output_c,
+                    &segments_c,
+                    &events_c,
+                    audio_path_str.as_deref(),
+                )?;
+                repo.save_intent_telemetry(&intent_telemetry)?;
+                repo.save_trace_telemetry(&trace_telemetry)?;
+                Ok(())
+            })
+            .await
+            .map_err(|e| TalkiwiError::Storage(format!("spawn_blocking failed: {}", e)))?;
 
         if let Err(e) = db_result {
             error!(error = %e, "failed to persist session");
             *self.state.lock().await = SessionState::Error(e.to_string());
+            self.emit_preview_state(SessionState::Error(e.to_string()))
+                .await;
             return Err(e);
         }
 
         *self.state.lock().await = SessionState::Ready;
+        *self.current_clock.lock().await = None;
+        *self.preview_tx.lock().await = None;
+        self.emit_preview_state(SessionState::Ready).await;
         info!(session_id = %session_id, "session completed successfully");
 
         Ok(output)
@@ -262,14 +305,56 @@ impl SessionManager {
 
     /// Get elapsed time since session start in milliseconds.
     pub async fn elapsed_ms(&self) -> u64 {
-        let action = self.action_track.lock().await;
-        action.elapsed_ms()
+        self.current_clock
+            .lock()
+            .await
+            .as_ref()
+            .map(SessionClock::elapsed_ms)
+            .unwrap_or(0)
+    }
+
+    async fn emit_preview_state(&self, state: SessionState) {
+        if let Some(tx) = self.preview_tx.lock().await.as_ref() {
+            let _ = tx.send(PreviewEvent::SessionStateChanged(state)).await;
+        }
+    }
+
+    async fn reset_after_start_failure(&self) {
+        *self.state.lock().await = SessionState::Idle;
+        *self.current_session.lock().await = None;
+        *self.current_clock.lock().await = None;
+        *self.preview_tx.lock().await = None;
+    }
+}
+
+fn build_trace_telemetry(
+    session_id: Uuid,
+    duration_ms: u64,
+    segments: &[SpeakSegment],
+    events: &[ActionEvent],
+    capture_health: Vec<CaptureHealthEntry>,
+) -> TraceTelemetry {
+    let duration_secs = (duration_ms as f32 / 1000.0).max(0.001);
+    let alignment_anomalies = events
+        .windows(2)
+        .filter(|window| window[0].session_offset_ms > window[1].session_offset_ms)
+        .count();
+
+    TraceTelemetry {
+        session_id,
+        duration_ms,
+        segment_count: segments.len(),
+        event_count: events.len(),
+        capture_health,
+        event_density: events.len() as f32 / duration_secs,
+        alignment_anomalies,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use talkiwi_core::clock::SessionClock;
     use talkiwi_core::event::{ActionPayload, ActionType};
     use talkiwi_core::traits::asr::{AsrProvider, AudioChunk};
     use talkiwi_engine::IntentRaw;
@@ -337,6 +422,7 @@ mod tests {
                 constraints: vec![],
                 missing_context: vec![],
                 restructured_speech: "Test restructured".to_string(),
+                references: vec![],
             })
         }
     }
@@ -381,7 +467,15 @@ mod tests {
         let (action_tx, _action_rx) = mpsc::channel(16);
 
         let session_id = sm
-            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None, 0.0)
+            .start(
+                speak_tx,
+                action_tx,
+                None,
+                SessionClock::new(),
+                Box::new(MockAsrProvider),
+                None,
+                0.0,
+            )
             .await
             .unwrap();
 
@@ -394,14 +488,30 @@ mod tests {
         let sm = make_session_manager();
         let (tx1, _) = mpsc::channel(16);
         let (tx2, _) = mpsc::channel(16);
-        sm.start(tx1, tx2, Box::new(MockAsrProvider), None, 0.0)
-            .await
-            .unwrap();
+        sm.start(
+            tx1,
+            tx2,
+            None,
+            SessionClock::new(),
+            Box::new(MockAsrProvider),
+            None,
+            0.0,
+        )
+        .await
+        .unwrap();
 
         let (tx3, _) = mpsc::channel(16);
         let (tx4, _) = mpsc::channel(16);
         let result = sm
-            .start(tx3, tx4, Box::new(MockAsrProvider), None, 0.0)
+            .start(
+                tx3,
+                tx4,
+                None,
+                SessionClock::new(),
+                Box::new(MockAsrProvider),
+                None,
+                0.0,
+            )
             .await;
         assert!(matches!(result, Err(TalkiwiError::AlreadyRecording)));
     }
@@ -420,7 +530,15 @@ mod tests {
         let (action_tx, _action_rx) = mpsc::channel(16);
 
         let session_id = sm
-            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None, 0.0)
+            .start(
+                speak_tx,
+                action_tx,
+                None,
+                SessionClock::new(),
+                Box::new(MockAsrProvider),
+                None,
+                0.0,
+            )
             .await
             .unwrap();
 
@@ -438,7 +556,15 @@ mod tests {
         let (action_tx, mut action_rx) = mpsc::channel(16);
 
         let session_id = sm
-            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None, 0.0)
+            .start(
+                speak_tx,
+                action_tx,
+                None,
+                SessionClock::new(),
+                Box::new(MockAsrProvider),
+                None,
+                0.0,
+            )
             .await
             .unwrap();
 
@@ -447,6 +573,7 @@ mod tests {
             session_id,
             timestamp: 0,
             session_offset_ms: 0,
+            observed_offset_ms: Some(0),
             duration_ms: None,
             action_type: ActionType::Screenshot,
             plugin_id: "builtin".into(),
@@ -481,7 +608,15 @@ mod tests {
         let (action_tx, _) = mpsc::channel(16);
 
         let session_id = sm
-            .start(speak_tx, action_tx, Box::new(MockAsrProvider), None, 0.0)
+            .start(
+                speak_tx,
+                action_tx,
+                None,
+                SessionClock::new(),
+                Box::new(MockAsrProvider),
+                None,
+                0.0,
+            )
             .await
             .unwrap();
 

@@ -55,12 +55,12 @@
 
 ### The problem it solves
 
-| Gap | Example |
-|-----|---------|
-| Speech without context | You say _"fix this"_ — the model has no idea what _"this"_ is |
+| Gap                                   | Example                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------ |
+| Speech without context                | You say _"fix this"_ — the model has no idea what _"this"_ is                        |
 | Transcription without action evidence | You selected code, took a screenshot, opened an issue — none of it reaches the model |
-| Raw speech without restructuring | Human speech has fillers, pronoun jumps, and restarts — not suitable for LLMs |
-| Closed context model | Coding, writing, and research need completely different context tracks |
+| Raw speech without restructuring      | Human speech has fillers, pronoun jumps, and restarts — not suitable for LLMs        |
+| Closed context model                  | Coding, writing, and research need completely different context tracks               |
 
 ### What it produces
 
@@ -95,25 +95,25 @@ Code modification + bug investigation
 
 ## Features (V1 Alpha)
 
-| # | Feature | Track |
-|---|---------|-------|
-| 1 | Widget button to start/stop capture | Core |
-| 2 | Local ASR via Whisper (whisper.cpp / mlx-whisper) | Speech |
-| 3 | Cloud ASR option (Deepgram / OpenAI Whisper API) | Speech |
-| 4 | Selected text injection | Artifact |
-| 5 | In-app screenshot tool with region selection | Artifact |
-| 6 | Current URL + page title injection | Artifact |
-| 7 | Clipboard content injection | Artifact |
-| 8 | File drag-in injection | Artifact |
-| 9 | Intent compiler (local LLM default, cloud optional) | Core |
-| 10 | **Automatic pronoun resolution** (_"this"_/_"that"_ → nearest artifact) | Core |
-| 11 | Structured Markdown output generation | Core |
-| 12 | Collapsible always-on sidebar panel | UI |
-| 13 | Multi-track timeline viewer | UI |
-| 14 | One-click copy to clipboard | UI |
-| 15 | Auto-save session to local file | Storage |
-| 16 | Session history browser | Storage |
-| 17 | Provider settings (local ↔ cloud switcher) | Settings |
+| #   | Feature                                                                 | Track    |
+| --- | ----------------------------------------------------------------------- | -------- |
+| 1   | Widget button to start/stop capture                                     | Core     |
+| 2   | Local ASR via Whisper (whisper.cpp / mlx-whisper)                       | Speech   |
+| 3   | Cloud ASR option (Deepgram / OpenAI Whisper API)                        | Speech   |
+| 4   | Selected text injection                                                 | Artifact |
+| 5   | In-app screenshot tool with region selection                            | Artifact |
+| 6   | Current URL + page title injection                                      | Artifact |
+| 7   | Clipboard content injection                                             | Artifact |
+| 8   | File drag-in injection                                                  | Artifact |
+| 9   | Intent compiler (local LLM default, cloud optional)                     | Core     |
+| 10  | **Automatic pronoun resolution** (_"this"_/_"that"_ → nearest artifact) | Core     |
+| 11  | Structured Markdown output generation                                   | Core     |
+| 12  | Collapsible always-on sidebar panel                                     | UI       |
+| 13  | Multi-track timeline viewer                                             | UI       |
+| 14  | One-click copy to clipboard                                             | UI       |
+| 15  | Auto-save session to local file                                         | Storage  |
+| 16  | Session history browser                                                 | Storage  |
+| 17  | Provider settings (local ↔ cloud switcher)                              | Settings |
 
 ---
 
@@ -149,14 +149,14 @@ Talkiwi is built as a **Tauri 2.0** app with a Rust backend and React frontend.
 
 ### Tech Stack
 
-| Layer | Choice | Rationale |
-|-------|--------|-----------|
-| App shell | **Tauri 2.0** (Rust + WebView) | ~10 MB bundle, native macOS APIs, great performance |
-| Frontend | React + TypeScript | Fast iteration, rich ecosystem |
-| ASR | whisper.cpp / mlx-whisper | Local-first, Apple Silicon optimized |
-| Intent Compiler | Ollama + small model (Qwen2.5-7B, Phi-3) | Local-first, provider-switchable |
-| Storage | SQLite (rusqlite) | Session history and event storage |
-| IPC | Tauri commands + event system | Rust ↔ frontend communication |
+| Layer           | Choice                                   | Rationale                                           |
+| --------------- | ---------------------------------------- | --------------------------------------------------- |
+| App shell       | **Tauri 2.0** (Rust + WebView)           | ~10 MB bundle, native macOS APIs, great performance |
+| Frontend        | React + TypeScript                       | Fast iteration, rich ecosystem                      |
+| ASR             | whisper.cpp / mlx-whisper                | Local-first, Apple Silicon optimized                |
+| Intent Compiler | Ollama + small model (Qwen2.5-7B, Phi-3) | Local-first, provider-switchable                    |
+| Storage         | SQLite (rusqlite)                        | Session history and event storage                   |
+| IPC             | Tauri commands + event system            | Rust ↔ frontend communication                       |
 
 ### Crate Layout
 
@@ -178,7 +178,7 @@ crates/
 
 - macOS 13 Ventura or later
 - Rust 1.78+ (`rustup install stable`)
-- Node.js 20+ and pnpm (`npm i -g pnpm`)
+- Node.js 20+ and npm 10+
 - [Ollama](https://ollama.ai/) (for local intent compilation)
 
 ### Installation
@@ -189,32 +189,49 @@ git clone https://github.com/JunJ-M/Talkiwi.git
 cd Talkiwi
 
 # 2. Install frontend dependencies
-pnpm install
+npm ci --prefix apps/desktop
 
 # 3. Pull a local model for the intent compiler
 ollama pull qwen2.5:7b
 
 # 4. Run in development mode
-pnpm tauri dev
+npm --prefix apps/desktop run tauri -- dev
 ```
 
 ### Build a release DMG
 
 ```bash
-pnpm tauri build
+npm --prefix apps/desktop run tauri -- build
 # Output: apps/desktop/src-tauri/target/release/bundle/dmg/
 ```
+
+## Release & Operations
+
+The repository now includes the release and distribution scaffold needed to ship a public desktop alpha.
+
+- [Download page](./website/index.html)
+- [GitHub Pages site](https://junj-m.github.io/Talkiwi/) _(after enabling Pages in repository settings)_
+- [Site source](./website/index.html)
+- [GitHub Releases](https://github.com/JunJ-M/Talkiwi/releases)
+- [Changelog](./CHANGELOG.md)
+- [Contributing Guide](./CONTRIBUTING.md)
+- [Roadmap](./ROADMAP.md)
+- [Installation & Permissions](./docs/guides/installation-and-permissions.md)
+- [Release Playbook](./docs/guides/release-playbook.md)
+- [Compatibility & Support](./docs/guides/compatibility-and-support.md)
+- [Operations & Observability](./docs/guides/operations-and-observability.md)
+- [Launch Asset Checklist](./docs/guides/launch-assets-checklist.md)
 
 ### macOS Permissions
 
 Talkiwi requires the following macOS permissions on first launch:
 
-| Permission | Used for |
-|-----------|---------|
-| Microphone | Voice capture |
-| Screen Recording | Screenshot tool |
-| Accessibility | Text selection capture |
-| Automation (optional) | Browser URL detection |
+| Permission            | Used for               |
+| --------------------- | ---------------------- |
+| Microphone            | Voice capture          |
+| Screen Recording      | Screenshot tool        |
+| Accessibility         | Text selection capture |
+| Automation (optional) | Browser URL detection  |
 
 Each permission is requested on first use — Talkiwi will guide you through the setup wizard.
 
@@ -254,11 +271,11 @@ Talkiwi is **local-first by design**:
 
 ## Roadmap
 
-| Version | Scope |
-|---------|-------|
-| **V1 Alpha** _(current)_ | Core capture, ASR, intent compiler, sidebar UI, session history |
-| **V1.5** | Plugin SDK with track declaration API, IDE/Terminal/Git plugins, prompt templates |
-| **V2** | Ambient (continuous) mode, auto scene recognition, cross-session recall, team collaboration |
+| Version                  | Scope                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| **V1 Alpha** _(current)_ | Core capture, ASR, intent compiler, sidebar UI, session history                             |
+| **V1.5**                 | Plugin SDK with track declaration API, IDE/Terminal/Git plugins, prompt templates           |
+| **V2**                   | Ambient (continuous) mode, auto scene recognition, cross-session recall, team collaboration |
 
 ---
 
@@ -267,15 +284,14 @@ Talkiwi is **local-first by design**:
 Contributions are welcome! Please read the [Contributing Guide](./CONTRIBUTING.md) before opening a pull request.
 
 ```bash
-# Run Rust tests
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
-# Run frontend tests
-pnpm --filter desktop test
-
-# Lint
-cargo clippy --workspace
-pnpm --filter desktop lint
+npm --prefix apps/desktop run typecheck
+npm --prefix apps/desktop run test
+npm --prefix apps/desktop run build
+bash scripts/check-release-readiness.sh
 ```
 
 Please open an issue before starting on a significant feature or architectural change.

@@ -3,6 +3,7 @@
 
 mod commands;
 pub mod session_manager;
+pub mod widget_preview;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -10,13 +11,16 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 use tauri::{AppHandle, Manager, RunEvent, WebviewWindow};
 
-use talkiwi_capture::{ClipboardCapture, PageCapture, SelectionCapture};
+use talkiwi_capture::{
+    ClickCapture, ClipboardCapture, FocusCapture, PageCapture, SelectionCapture,
+};
 use talkiwi_core::config::AppConfig;
 use talkiwi_core::traits::asr::AsrProvider;
 use talkiwi_engine::IntentEngine;
 use talkiwi_track::{ActionTrack, SpeakTrack};
 
 use crate::session_manager::SessionManager;
+use crate::widget_preview::WidgetPreviewHub;
 
 /// Shared application state managed by Tauri.
 ///
@@ -25,12 +29,14 @@ use crate::session_manager::SessionManager;
 /// is `!Send` and DB operations are synchronous.
 pub(crate) struct AppState {
     pub(crate) session_manager: SessionManager,
+    pub(crate) audio_input_manager: talkiwi_asr::AudioInputManager,
     pub(crate) db: Arc<Mutex<Connection>>,
     pub(crate) data_dir: PathBuf,
     pub(crate) output_dir: PathBuf,
     pub(crate) config_path: PathBuf,
     pub(crate) config: Mutex<AppConfig>,
     pub(crate) app_handle: AppHandle,
+    pub(crate) widget_preview: WidgetPreviewHub,
 }
 
 /// Load settings.json, falling back to defaults if missing.
@@ -167,8 +173,19 @@ pub fn run() {
             let db = talkiwi_db::init_database(&db_path)?;
             let db = Arc::new(Mutex::new(db));
 
+            let selected_input = talkiwi_asr::SelectedAudioInput::default();
+            if let Some(selected) = config
+                .audio
+                .input_device_id
+                .clone()
+                .or_else(|| config.audio.input_device_name.clone())
+            {
+                selected_input.set(Some(selected));
+            }
+            let audio_input_manager = talkiwi_asr::AudioInputManager::new(selected_input.clone());
+
             // Construct audio source + SpeakTrack
-            let audio_capture = talkiwi_asr::AudioCapture::new();
+            let audio_capture = talkiwi_asr::AudioCapture::with_selected_input(selected_input);
             let speak_track = SpeakTrack::new(Box::new(audio_capture));
 
             // Construct ActionTrack with registered captures.
@@ -185,6 +202,8 @@ pub fn run() {
             if config.capture.page_enabled {
                 action_track.register(Box::new(PageCapture::new(placeholder_id)));
             }
+            action_track.register(Box::new(FocusCapture::new(placeholder_id)));
+            action_track.register(Box::new(ClickCapture::new(placeholder_id)));
 
             // Construct IntentEngine
             let intent_provider: Box<dyn talkiwi_engine::IntentProvider> =
@@ -202,15 +221,18 @@ pub fn run() {
             // Construct SessionManager — shares the same DB connection
             let session_manager =
                 SessionManager::new(speak_track, action_track, engine, Arc::clone(&db));
+            let widget_preview = WidgetPreviewHub::new(app.handle().clone());
 
             app.manage(AppState {
                 session_manager,
+                audio_input_manager,
                 db,
                 data_dir,
                 output_dir,
                 config_path,
                 config: Mutex::new(config),
                 app_handle: app.handle().clone(),
+                widget_preview,
             });
 
             // Configure ball window (transparency via tauri.conf.json)
@@ -230,12 +252,16 @@ pub fn run() {
             commands::session::session_stop,
             commands::session::session_state,
             commands::session::session_regenerate,
+            commands::audio::audio_list_inputs,
+            commands::audio::audio_get_selected_input,
+            commands::audio::audio_set_selected_input,
             commands::capture::capture_screenshot,
             commands::history::history_list,
             commands::history::history_detail,
             commands::config::config_get,
             commands::config::config_update,
             commands::config::config_update_many,
+            commands::telemetry::telemetry_quality_overview,
             commands::permissions::permissions_check,
             commands::permissions::permissions_request,
             commands::model::model_status,

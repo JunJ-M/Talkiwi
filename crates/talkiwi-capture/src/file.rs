@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use talkiwi_core::clock::SessionClock;
 use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType};
 use uuid::Uuid;
 
@@ -56,6 +57,7 @@ pub fn process_dropped_file(
         session_id,
         timestamp: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0),
         session_offset_ms,
+        observed_offset_ms: Some(session_offset_ms),
         duration_ms: None,
         action_type: ActionType::FileAttach,
         plugin_id: "builtin".to_string(),
@@ -101,7 +103,11 @@ impl talkiwi_core::traits::capture::ActionCapture for FileCapture {
         &[ActionType::FileAttach]
     }
 
-    fn start(&mut self, _tx: tokio::sync::mpsc::Sender<ActionEvent>) -> anyhow::Result<()> {
+    fn start(
+        &mut self,
+        _tx: tokio::sync::mpsc::Sender<ActionEvent>,
+        _clock: SessionClock,
+    ) -> anyhow::Result<()> {
         // File events are injected externally via ActionTrack::inject_event
         Ok(())
     }

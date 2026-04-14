@@ -1,0 +1,36 @@
+name: Feature Request
+description: Propose a product, workflow, or developer-experience improvement.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem or operational gap are you trying to solve?
+      placeholder: The first-run permission flow does not tell the user what to do after System Settings opens.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the smallest usable solution first.
+      placeholder: Add a retry/check button and show a per-permission status badge.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and Constraints
+      description: Mention affected platforms, providers, or release risks.
+      placeholder: macOS only; should not block the rest of onboarding.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Note rejected ideas or workarounds so discussion starts from current thinking.

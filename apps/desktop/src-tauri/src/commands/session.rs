@@ -2,6 +2,7 @@ use tauri::{Emitter, State};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use talkiwi_core::clock::SessionClock;
 use talkiwi_core::event::ActionEvent;
 use talkiwi_core::output::IntentOutput;
 use talkiwi_core::session::{SessionState, SpeakSegment};
@@ -25,12 +26,35 @@ pub async fn session_start(state: State<'_, AppState>) -> Result<String, String>
 
     // Pass output_dir for WAV recording
     let output_dir = Some(state.output_dir.clone());
-
-    let session_id = state
-        .session_manager
-        .start(speak_tx, action_tx, asr_provider, output_dir, input_gain_db)
-        .await
+    let clock = SessionClock::new();
+    let selected_mic = state
+        .audio_input_manager
+        .resolve_selected_input()
         .map_err(|e| e.to_string())?;
+    let preview_tx = state
+        .widget_preview
+        .start_session(clock.clone(), selected_mic)
+        .await;
+
+    let session_id = match state
+        .session_manager
+        .start(
+            speak_tx,
+            action_tx,
+            Some(preview_tx),
+            clock,
+            asr_provider,
+            output_dir,
+            input_gain_db,
+        )
+        .await
+    {
+        Ok(session_id) => session_id,
+        Err(error) => {
+            state.widget_preview.reset().await;
+            return Err(error.to_string());
+        }
+    };
 
     // Spawn forwarders for Tauri event emission
     let app_handle = state.app_handle.clone();
