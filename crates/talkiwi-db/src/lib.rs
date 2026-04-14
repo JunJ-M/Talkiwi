@@ -1,7 +1,7 @@
 mod migrations;
 mod session_repo;
 
-pub use session_repo::{SessionDetail, SessionRepo};
+pub use session_repo::{QualityOverview, SessionDetail, SessionRepo};
 
 use rusqlite::Connection;
 

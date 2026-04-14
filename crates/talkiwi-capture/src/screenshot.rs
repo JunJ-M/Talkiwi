@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use talkiwi_core::clock::SessionClock;
 use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType};
 use talkiwi_core::traits::capture::{ActionCapture, PermissionStatus};
 
@@ -57,6 +58,7 @@ impl ScreenshotCapture {
             session_id,
             timestamp: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0),
             session_offset_ms,
+            observed_offset_ms: Some(session_offset_ms),
             duration_ms: None,
             action_type: ActionType::Screenshot,
             plugin_id: "builtin".to_string(),
@@ -81,7 +83,11 @@ impl ActionCapture for ScreenshotCapture {
         &[ActionType::Screenshot]
     }
 
-    fn start(&mut self, _tx: mpsc::Sender<ActionEvent>) -> anyhow::Result<()> {
+    fn start(
+        &mut self,
+        _tx: mpsc::Sender<ActionEvent>,
+        _clock: SessionClock,
+    ) -> anyhow::Result<()> {
         // Screenshot is trigger-based, not background polling
         Ok(())
     }
@@ -113,7 +119,7 @@ mod tests {
     fn screenshot_capture_start_stop_noop() {
         let mut capture = ScreenshotCapture::new(PathBuf::from("/tmp"));
         let (tx, _rx) = mpsc::channel(1);
-        capture.start(tx).unwrap();
+        capture.start(tx, SessionClock::new()).unwrap();
         capture.stop().unwrap();
     }
 

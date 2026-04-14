@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 
 use talkiwi_asr::AudioSource;
+use talkiwi_core::preview::PreviewEvent;
 use talkiwi_core::session::SpeakSegment;
 use talkiwi_core::traits::asr::{AsrProvider, AudioChunk};
 
@@ -28,9 +29,14 @@ pub struct SpeakTrack {
     event_tx: Option<mpsc::Sender<SpeakSegment>>,
     /// Handle to the ASR processing task for cleanup.
     asr_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Handle to the segment collector task.
+    collector_handle: Option<tokio::task::JoinHandle<()>>,
     /// Handle to the WAV writer tee task.
     wav_handle: Option<tokio::task::JoinHandle<Option<PathBuf>>>,
 }
+
+const ASR_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const COLLECTOR_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn apply_input_gain(samples: &mut [f32], gain_db: f32) {
     if gain_db.abs() < f32::EPSILON {
@@ -43,6 +49,25 @@ fn apply_input_gain(samples: &mut [f32], gain_db: f32) {
     }
 }
 
+fn compute_levels(samples: &[f32]) -> (f32, f32) {
+    if samples.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    let mut squared_sum = 0.0;
+    let mut peak = 0.0;
+    for sample in samples {
+        let abs = sample.abs();
+        squared_sum += sample * sample;
+        if abs > peak {
+            peak = abs;
+        }
+    }
+
+    let rms = (squared_sum / samples.len() as f32).sqrt();
+    (rms, peak)
+}
+
 impl SpeakTrack {
     /// Create a new SpeakTrack with an audio source.
     pub fn new(audio_source: Box<dyn AudioSource>) -> Self {
@@ -51,6 +76,7 @@ impl SpeakTrack {
             segments: Arc::new(Mutex::new(Vec::new())),
             event_tx: None,
             asr_handle: None,
+            collector_handle: None,
             wav_handle: None,
         }
     }
@@ -70,11 +96,13 @@ impl SpeakTrack {
     pub async fn start(
         &mut self,
         event_tx: mpsc::Sender<SpeakSegment>,
+        preview_tx: Option<mpsc::Sender<PreviewEvent>>,
         asr_provider: Box<dyn AsrProvider>,
         audio_dir: Option<PathBuf>,
         input_gain_db: f32,
     ) -> anyhow::Result<()> {
         self.event_tx = Some(event_tx.clone());
+        self.segments.lock().await.clear();
 
         let (tee_tx, mut tee_rx) = mpsc::channel::<AudioChunk>(256);
         let (asr_audio_tx, asr_audio_rx) = mpsc::channel::<AudioChunk>(256);
@@ -85,6 +113,7 @@ impl SpeakTrack {
         info!("audio source started");
 
         // Spawn tee task: reads from audio source, writes WAV + forwards to ASR
+        let preview_tx_for_audio = preview_tx.clone();
         let wav_handle = tokio::spawn(async move {
             let mut wav_writer = audio_dir.and_then(|dir| {
                 let wav_path = dir.join("audio.wav");
@@ -102,6 +131,18 @@ impl SpeakTrack {
 
             while let Some(mut chunk) = tee_rx.recv().await {
                 apply_input_gain(&mut chunk.samples, input_gain_db);
+                let (rms, peak) = compute_levels(&chunk.samples);
+
+                if let Some(preview_tx) = &preview_tx_for_audio {
+                    let _ = preview_tx
+                        .send(PreviewEvent::AudioLevel {
+                            offset_ms: chunk.offset_ms,
+                            rms,
+                            peak,
+                            vad_active: rms >= 0.02 || peak >= 0.08,
+                        })
+                        .await;
+                }
 
                 // Write to WAV file (best-effort — don't fail the pipeline)
                 if let Some(ref mut writer) = wav_writer {
@@ -133,7 +174,7 @@ impl SpeakTrack {
         self.wav_handle = Some(wav_handle);
 
         // Spawn ASR task
-        tokio::spawn(async move {
+        let asr_handle = tokio::spawn(async move {
             if let Err(e) = asr_provider
                 .transcribe_stream(asr_audio_rx, segment_tx)
                 .await
@@ -141,19 +182,33 @@ impl SpeakTrack {
                 warn!(error = %e, "ASR transcription error");
             }
         });
+        self.asr_handle = Some(asr_handle);
 
         // Spawn collector
         let segments = Arc::clone(&self.segments);
+        let preview_tx_for_segments = preview_tx;
         let collector_handle = tokio::spawn(async move {
             while let Some(segment) = segment_rx.recv().await {
                 segments.lock().await.push(segment.clone());
+                if let Some(preview_tx) = &preview_tx_for_segments {
+                    let event = if segment.is_final {
+                        PreviewEvent::TranscriptFinal(segment.clone())
+                    } else {
+                        PreviewEvent::TranscriptPartial {
+                            start_ms: segment.start_ms,
+                            end_ms: segment.end_ms,
+                            text: segment.text.clone(),
+                        }
+                    };
+                    let _ = preview_tx.send(event).await;
+                }
                 if event_tx.send(segment).await.is_err() {
                     break;
                 }
             }
         });
 
-        self.asr_handle = Some(collector_handle);
+        self.collector_handle = Some(collector_handle);
         Ok(())
     }
 
@@ -180,9 +235,30 @@ impl SpeakTrack {
             None
         };
 
-        // Wait for ASR to flush
+        // Wait for ASR to finish its final flush before collecting the last
+        // transcript segments. Otherwise the final spoken sentence is easy to lose.
         if let Some(handle) = self.asr_handle.take() {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+            match tokio::time::timeout(ASR_FLUSH_TIMEOUT, handle).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    warn!(error = %e, "ASR task join error");
+                }
+                Err(_) => {
+                    warn!("ASR task timed out while flushing final transcript");
+                }
+            }
+        }
+
+        if let Some(handle) = self.collector_handle.take() {
+            match tokio::time::timeout(COLLECTOR_FLUSH_TIMEOUT, handle).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    warn!(error = %e, "collector task join error");
+                }
+                Err(_) => {
+                    warn!("collector task timed out while flushing transcript segments");
+                }
+            }
         }
 
         self.event_tx = None;
@@ -275,6 +351,93 @@ mod tests {
         }
     }
 
+    struct MockAsrProviderWithPartial;
+
+    #[async_trait::async_trait]
+    impl AsrProvider for MockAsrProviderWithPartial {
+        fn id(&self) -> &str {
+            "mock-partial"
+        }
+        fn name(&self) -> &str {
+            "Mock ASR Partial"
+        }
+        fn requires_network(&self) -> bool {
+            false
+        }
+        async fn is_available(&self) -> bool {
+            true
+        }
+        async fn transcribe_stream(
+            &self,
+            mut audio_rx: mpsc::Receiver<AudioChunk>,
+            segment_tx: mpsc::Sender<SpeakSegment>,
+        ) -> anyhow::Result<()> {
+            if let Some(chunk) = audio_rx.recv().await {
+                let _ = segment_tx
+                    .send(SpeakSegment {
+                        text: "partial speech".to_string(),
+                        start_ms: chunk.offset_ms,
+                        end_ms: chunk.offset_ms + 100,
+                        confidence: 0.5,
+                        is_final: false,
+                    })
+                    .await;
+                let _ = segment_tx
+                    .send(SpeakSegment {
+                        text: "final speech".to_string(),
+                        start_ms: chunk.offset_ms,
+                        end_ms: chunk.offset_ms + 150,
+                        confidence: 0.9,
+                        is_final: true,
+                    })
+                    .await;
+            }
+            Ok(())
+        }
+    }
+
+    struct SlowFinalAsrProvider {
+        delay_ms: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl AsrProvider for SlowFinalAsrProvider {
+        fn id(&self) -> &str {
+            "slow-final"
+        }
+        fn name(&self) -> &str {
+            "Slow Final ASR"
+        }
+        fn requires_network(&self) -> bool {
+            false
+        }
+        async fn is_available(&self) -> bool {
+            true
+        }
+        async fn transcribe_stream(
+            &self,
+            mut audio_rx: mpsc::Receiver<AudioChunk>,
+            segment_tx: mpsc::Sender<SpeakSegment>,
+        ) -> anyhow::Result<()> {
+            let mut last_offset = 0;
+            while let Some(chunk) = audio_rx.recv().await {
+                last_offset = chunk.offset_ms;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(self.delay_ms)).await;
+            let _ = segment_tx
+                .send(SpeakSegment {
+                    text: "slow final speech".to_string(),
+                    start_ms: last_offset,
+                    end_ms: last_offset + 300,
+                    confidence: 0.92,
+                    is_final: true,
+                })
+                .await;
+            Ok(())
+        }
+    }
+
     fn make_test_chunks(count: usize) -> Vec<AudioChunk> {
         (0..count)
             .map(|i| AudioChunk {
@@ -294,6 +457,13 @@ mod tests {
         assert_eq!(samples[2], 1.0);
     }
 
+    #[test]
+    fn compute_levels_reports_rms_and_peak() {
+        let (rms, peak) = compute_levels(&[0.0, 0.5, -0.5, 1.0]);
+        assert!(rms > 0.6 && rms < 0.62);
+        assert_eq!(peak, 1.0);
+    }
+
     #[tokio::test]
     async fn speak_track_start_produces_segments() {
         let chunks = make_test_chunks(3);
@@ -303,7 +473,7 @@ mod tests {
 
         let (event_tx, mut event_rx) = mpsc::channel(16);
         track
-            .start(event_tx, Box::new(MockAsrProvider), None, 0.0)
+            .start(event_tx, None, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -336,7 +506,7 @@ mod tests {
 
         let (event_tx, _rx) = mpsc::channel(16);
         track
-            .start(event_tx, Box::new(MockAsrProvider), None, 0.0)
+            .start(event_tx, None, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -354,7 +524,7 @@ mod tests {
 
         let (event_tx, mut _rx) = mpsc::channel(16);
         track
-            .start(event_tx, Box::new(MockAsrProvider), None, 0.0)
+            .start(event_tx, None, Box::new(MockAsrProvider), None, 0.0)
             .await
             .unwrap();
 
@@ -377,6 +547,7 @@ mod tests {
         track
             .start(
                 event_tx,
+                None,
                 Box::new(MockAsrProvider),
                 Some(dir.path().to_path_buf()),
                 0.0,
@@ -398,5 +569,68 @@ mod tests {
         // Verify it's a valid WAV
         let metadata = std::fs::metadata(&audio_path).unwrap();
         assert!(metadata.len() > 44); // header + some data
+    }
+
+    #[tokio::test]
+    async fn speak_track_emits_partial_and_final_preview_events() {
+        let audio_source = MockAudioSource::new(make_test_chunks(1));
+        let mut track = SpeakTrack::new(Box::new(audio_source));
+
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let (preview_tx, mut preview_rx) = mpsc::channel(16);
+        track
+            .start(
+                event_tx,
+                Some(preview_tx),
+                Box::new(MockAsrProviderWithPartial),
+                None,
+                0.0,
+            )
+            .await
+            .unwrap();
+
+        let mut saw_partial = false;
+        let mut saw_final = false;
+        for _ in 0..4 {
+            if let Ok(Some(event)) =
+                tokio::time::timeout(std::time::Duration::from_millis(500), preview_rx.recv()).await
+            {
+                match event {
+                    PreviewEvent::TranscriptPartial { text, .. } if text == "partial speech" => {
+                        saw_partial = true;
+                    }
+                    PreviewEvent::TranscriptFinal(segment) if segment.text == "final speech" => {
+                        saw_final = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(saw_partial);
+        assert!(saw_final);
+        let _ = track.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn speak_track_waits_for_slow_final_asr_flush() {
+        let audio_source = MockAudioSource::new(make_test_chunks(1));
+        let mut track = SpeakTrack::new(Box::new(audio_source));
+
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        track
+            .start(
+                event_tx,
+                None,
+                Box::new(SlowFinalAsrProvider { delay_ms: 5_200 }),
+                None,
+                0.0,
+            )
+            .await
+            .unwrap();
+
+        let result = track.stop().await.unwrap();
+        assert_eq!(result.segments.len(), 1);
+        assert_eq!(result.segments[0].text, "slow final speech");
     }
 }

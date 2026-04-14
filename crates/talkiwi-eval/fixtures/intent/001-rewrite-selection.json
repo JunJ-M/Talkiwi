@@ -1,0 +1,49 @@
+{
+  "id": "001-rewrite-selection",
+  "description": "用户选中代码后说重写这段代码",
+  "segments": [
+    {
+      "text": "帮我重写这段代码",
+      "start_ms": 5000,
+      "end_ms": 7000,
+      "confidence": 0.95,
+      "is_final": true
+    }
+  ],
+  "events": [
+    {
+      "id": "00000000-0000-0000-0000-000000000101",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "timestamp": 1712900000000,
+      "session_offset_ms": 3000,
+      "observed_offset_ms": 3000,
+      "duration_ms": null,
+      "action_type": "selection.text",
+      "plugin_id": "builtin",
+      "payload": {
+        "text": "fn old() {}",
+        "app_name": "VSCode",
+        "window_title": "main.rs",
+        "char_count": 11
+      },
+      "semantic_hint": null,
+      "confidence": 1.0
+    }
+  ],
+  "provider_output": {
+    "task": "重写选中的函数",
+    "intent": "rewrite",
+    "constraints": [
+      "保留函数签名"
+    ],
+    "missing_context": [],
+    "restructured_speech": "请帮我重写选中的函数",
+    "references": [
+      {
+        "spoken_text": "这段代码",
+        "event_index": 0,
+        "reason": "用户提到了选中的代码"
+      }
+    ]
+  }
+}

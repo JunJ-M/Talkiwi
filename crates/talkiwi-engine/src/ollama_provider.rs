@@ -38,6 +38,27 @@ impl OllamaProvider {
     pub fn default_local() -> Self {
         Self::new("http://localhost:11434", None)
     }
+
+    fn parse_llm_json(response: &str) -> anyhow::Result<IntentRaw> {
+        match serde_json::from_str::<IntentRaw>(response) {
+            Ok(raw) => Ok(raw),
+            Err(original_error) => {
+                let start = response.find('{');
+                let end = response.rfind('}');
+                match (start, end) {
+                    (Some(start), Some(end)) if start < end => {
+                        let candidate = &response[start..=end];
+                        serde_json::from_str(candidate).context(format!(
+                            "failed to repair LLM JSON output: {original_error}"
+                        ))
+                    }
+                    _ => {
+                        Err(original_error).context("failed to parse LLM JSON output as IntentRaw")
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -116,8 +137,7 @@ impl IntentProvider for OllamaProvider {
             .await
             .context("failed to parse Ollama response")?;
 
-        let raw: IntentRaw = serde_json::from_str(&ollama_resp.response)
-            .context("failed to parse LLM JSON output as IntentRaw")?;
+        let raw = Self::parse_llm_json(&ollama_resp.response)?;
 
         Ok(raw)
     }
@@ -156,5 +176,22 @@ mod tests {
         let json = r#"{ "task": "incomplete"#;
         let result: Result<IntentRaw, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_llm_json_repairs_wrapped_payload() {
+        let raw = OllamaProvider::parse_llm_json(
+            r#"Here is the result:
+            {
+              "task":"重写这段代码",
+              "intent":"rewrite",
+              "constraints":[],
+              "missing_context":[],
+              "restructured_speech":"请重写这段代码",
+              "references":[]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(raw.intent, "rewrite");
     }
 }

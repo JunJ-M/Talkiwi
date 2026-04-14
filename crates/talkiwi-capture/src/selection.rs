@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 use uuid::Uuid;
 
+use talkiwi_core::clock::SessionClock;
 use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType};
 use talkiwi_core::traits::capture::{ActionCapture, PermissionStatus};
 
@@ -120,12 +121,11 @@ impl ActionCapture for SelectionCapture {
         &[ActionType::SelectionText]
     }
 
-    fn start(&mut self, tx: mpsc::Sender<ActionEvent>) -> anyhow::Result<()> {
+    fn start(&mut self, tx: mpsc::Sender<ActionEvent>, clock: SessionClock) -> anyhow::Result<()> {
         let running = Arc::clone(&self.running);
         running.store(true, Ordering::SeqCst);
 
         let session_id = self.session_id;
-        let start_time = Instant::now();
 
         let handle = std::thread::spawn(move || {
             let mut last_text: Option<String> = None;
@@ -164,16 +164,17 @@ impl ActionCapture for SelectionCapture {
                 }
 
                 let char_count = text.chars().count();
-                let offset_ms = start_time.elapsed().as_millis() as u64;
+                let offset_ms = clock.elapsed_ms();
 
                 let event = ActionEvent {
                     id: Uuid::new_v4(),
                     session_id,
                     timestamp: u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0),
                     session_offset_ms: offset_ms,
+                    observed_offset_ms: Some(offset_ms),
                     duration_ms: None,
                     action_type: ActionType::SelectionText,
-                    plugin_id: "builtin".to_string(),
+                    plugin_id: "builtin.selection".to_string(),
                     payload: ActionPayload::SelectionText {
                         text: text.clone(),
                         app_name,
@@ -232,7 +233,7 @@ mod tests {
         let mut capture = SelectionCapture::new(Uuid::new_v4());
         let (tx, _rx) = mpsc::channel(16);
 
-        capture.start(tx).unwrap();
+        capture.start(tx, SessionClock::new()).unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         capture.stop().unwrap();
     }

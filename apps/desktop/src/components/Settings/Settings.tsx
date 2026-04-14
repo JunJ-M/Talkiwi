@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { ProviderSettings } from "./ProviderSettings";
 import { PermissionSettings } from "./PermissionSettings";
+import { QualityPanel } from "./QualityPanel";
 
 export function Settings() {
   const load = useSettingsStore((s) => s.load);
@@ -12,6 +13,7 @@ export function Settings() {
 
   return (
     <div className="settings">
+      <QualityPanel />
       <PermissionSettings />
       <ProviderSettings />
     </div>

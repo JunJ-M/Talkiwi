@@ -23,7 +23,7 @@ pub struct Session {
 }
 
 /// Speech segment from ASR.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpeakSegment {
     pub text: String,
     pub start_ms: u64,

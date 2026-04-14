@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use talkiwi_asr::AudioSource;
+use talkiwi_core::clock::SessionClock;
 use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType, ClipboardContentType};
 use talkiwi_core::session::SpeakSegment;
 use talkiwi_core::timeline::{align_timeline, timeline_to_summary, TimelineEntry};
@@ -102,7 +103,7 @@ impl ActionCapture for MockClipboardCapture {
         &[ActionType::ClipboardChange]
     }
 
-    fn start(&mut self, tx: mpsc::Sender<ActionEvent>) -> anyhow::Result<()> {
+    fn start(&mut self, tx: mpsc::Sender<ActionEvent>, _clock: SessionClock) -> anyhow::Result<()> {
         let session_id = self.session_id;
         tokio::spawn(async move {
             // Simulate clipboard change at ~150ms
@@ -112,6 +113,7 @@ impl ActionCapture for MockClipboardCapture {
                 session_id,
                 timestamp: 1712900000150,
                 session_offset_ms: 150,
+                observed_offset_ms: Some(150),
                 duration_ms: None,
                 action_type: ActionType::ClipboardChange,
                 plugin_id: "builtin".to_string(),
@@ -164,10 +166,13 @@ async fn e2e_full_pipeline_mock() {
     let (action_tx, mut action_rx) = mpsc::channel::<ActionEvent>(16);
 
     speak_track
-        .start(speak_tx, Box::new(MockAsrProvider), None, 0.0)
+        .start(speak_tx, None, Box::new(MockAsrProvider), None, 0.0)
         .await
         .unwrap();
-    action_track.start(action_tx).unwrap();
+    action_track
+        .start(action_tx, SessionClock::new(), None)
+        .await
+        .unwrap();
 
     // ── 4. Inject a file-drop event (simulating user drag-drop) ──
     let file_event = ActionEvent {
@@ -175,6 +180,7 @@ async fn e2e_full_pipeline_mock() {
         session_id,
         timestamp: 1712900000300,
         session_offset_ms: 0, // will be updated by inject
+        observed_offset_ms: Some(0),
         duration_ms: None,
         action_type: ActionType::FileAttach,
         plugin_id: "builtin".to_string(),
@@ -288,10 +294,13 @@ async fn e2e_empty_session() {
     let (action_tx, _action_rx) = mpsc::channel(16);
 
     speak_track
-        .start(speak_tx, Box::new(MockAsrProvider), None, 0.0)
+        .start(speak_tx, None, Box::new(MockAsrProvider), None, 0.0)
         .await
         .unwrap();
-    action_track.start(action_tx).unwrap();
+    action_track
+        .start(action_tx, SessionClock::new(), None)
+        .await
+        .unwrap();
 
     let speak_result = speak_track.stop().await.unwrap();
     let events = action_track.stop().await.unwrap();
@@ -318,7 +327,7 @@ async fn e2e_only_speech_no_actions() {
 
     let (speak_tx, _rx) = mpsc::channel(16);
     speak_track
-        .start(speak_tx, Box::new(MockAsrProvider), None, 0.0)
+        .start(speak_tx, None, Box::new(MockAsrProvider), None, 0.0)
         .await
         .unwrap();
 

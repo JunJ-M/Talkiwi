@@ -27,9 +27,19 @@ function App() {
         setView("record");
       },
     );
+    const unlistenOpenSettings = listen("talkiwi://open-settings", () => {
+      setSelectedSessionId(null);
+      setView("settings");
+    });
+    const unlistenOpenHistory = listen("talkiwi://open-history", () => {
+      setSelectedSessionId(null);
+      setView("history");
+    });
 
     return () => {
       unlistenSessionComplete.then((fn) => fn());
+      unlistenOpenSettings.then((fn) => fn());
+      unlistenOpenHistory.then((fn) => fn());
     };
   }, [initFromSession]);
 

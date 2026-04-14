@@ -588,6 +588,27 @@ body {
   word-break: break-word;
 }
 
+.settings-quality-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+}
+
+.settings-quality-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-sm);
+  border: 1px solid oklch(88% 0 0);
+  border-radius: var(--radius-sm);
+  background: white;
+}
+
+.settings-quality-card strong {
+  font-size: var(--text-lg);
+  color: var(--color-text);
+}
+
 .settings-error {
   font-size: var(--text-sm);
   color: oklch(58% 0.22 25);

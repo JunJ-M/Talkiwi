@@ -6,7 +6,9 @@ export type KnownActionType =
   | "clipboard.change"
   | "page.current"
   | "click.link"
-  | "file.attach";
+  | "file.attach"
+  | "window.focus"
+  | "click.mouse";
 
 // Allow plugin-defined action types while preserving known type narrowing
 export type ActionType = KnownActionType | (string & {});
@@ -62,6 +64,19 @@ export interface ClickLinkPayload {
   title?: string | null;
 }
 
+export interface WindowFocusPayload {
+  app_name: string;
+  window_title: string;
+}
+
+export interface ClickMousePayload {
+  app_name?: string | null;
+  window_title?: string | null;
+  button: string;
+  x: number;
+  y: number;
+}
+
 export interface FileAttachPayload {
   file_path: string;
   file_name: string;
@@ -75,6 +90,7 @@ interface BaseActionEvent<TActionType extends ActionType, TPayload> {
   session_id: string;
   timestamp: number;
   session_offset_ms: number;
+  observed_offset_ms?: number | null;
   duration_ms: number | null;
   action_type: TActionType;
   plugin_id: string;
@@ -89,7 +105,9 @@ export type KnownActionEvent =
   | BaseActionEvent<"clipboard.change", ClipboardChangePayload>
   | BaseActionEvent<"page.current", PageCurrentPayload>
   | BaseActionEvent<"click.link", ClickLinkPayload>
-  | BaseActionEvent<"file.attach", FileAttachPayload>;
+  | BaseActionEvent<"file.attach", FileAttachPayload>
+  | BaseActionEvent<"window.focus", WindowFocusPayload>
+  | BaseActionEvent<"click.mouse", ClickMousePayload>;
 
 export type CustomActionEvent = BaseActionEvent<
   Exclude<ActionType, KnownActionType>,
@@ -123,12 +141,22 @@ export interface IntentOutput {
   session_id: string;
   task: string;
   intent: string;
+  intent_category:
+    | "rewrite"
+    | "analyze"
+    | "summarize"
+    | "generate"
+    | "debug"
+    | "query"
+    | "unknown";
   constraints: string[];
   missing_context: string[];
   restructured_speech: string;
   final_markdown: string;
   artifacts: ArtifactRef[];
   references: Reference[];
+  output_confidence: number;
+  risk_level: "low" | "medium" | "high";
 }
 
 export interface SessionSummary {
@@ -167,6 +195,10 @@ export interface PermissionReport {
 }
 
 export interface AppConfig {
+  audio: {
+    input_device_id: string | null;
+    input_device_name: string | null;
+  };
   asr: {
     active_provider: string;
     whisper_model_path: string | null;
@@ -208,6 +240,92 @@ export interface AppConfig {
     output_dir: string;
     db_path: string;
   };
+}
+
+export interface AudioInputInfo {
+  id: string;
+  name: string;
+  is_default: boolean;
+  sample_rates: number[];
+  channels: number[];
+}
+
+export type CaptureStatus =
+  | "active"
+  | "permission_denied"
+  | "not_started"
+  | "stale"
+  | "error";
+
+export interface CaptureHealthEntry {
+  capture_id: string;
+  status: CaptureStatus;
+  event_count: number;
+  last_event_offset_ms?: number | null;
+}
+
+export interface WidgetActionPin {
+  id: string;
+  t: number;
+  type: string;
+  count?: number | null;
+}
+
+export interface WidgetTranscriptState {
+  partial_text?: string | null;
+  final_segments: SpeakSegment[];
+}
+
+export interface WidgetHealthState {
+  capture_status: CaptureHealthEntry[];
+  degraded: boolean;
+}
+
+export interface WidgetSnapshot {
+  session_state: SessionState;
+  elapsed_ms: number;
+  mic?: AudioInputInfo | null;
+  audio_bins: number[];
+  speech_bins: number[];
+  action_pins: WidgetActionPin[];
+  transcript: WidgetTranscriptState;
+  health: WidgetHealthState;
+}
+
+export interface IntentTelemetry {
+  session_id: string;
+  timestamp: number;
+  provider_latency_ms: number;
+  provider_success: boolean;
+  retry_count: number;
+  fallback_used: boolean;
+  schema_valid: boolean;
+  repair_attempted: boolean;
+  output_confidence: number;
+  reference_count: number;
+  low_confidence_refs: number;
+  intent_category: string;
+}
+
+export interface TraceTelemetry {
+  session_id: string;
+  duration_ms: number;
+  segment_count: number;
+  event_count: number;
+  capture_health: CaptureHealthEntry[];
+  event_density: number;
+  alignment_anomalies: number;
+}
+
+export interface QualityOverview {
+  intent_sessions: number;
+  trace_sessions: number;
+  avg_provider_latency_ms: number;
+  avg_output_confidence: number;
+  fallback_rate: number;
+  degraded_trace_rate: number;
+  latest_intent?: IntentTelemetry | null;
+  latest_trace?: TraceTelemetry | null;
 }
 
 export interface ModelStatusResponse {

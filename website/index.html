@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Talkiwi | Download & Release Hub</title>
+    <meta
+      name="description"
+      content="Talkiwi is a local-first macOS desktop app that compiles voice, selections, screenshots, and activity into AI-ready context."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Talkiwi for macOS</p>
+          <h1>Voice, selections, screenshots, and actions compiled into AI-ready context.</h1>
+          <p class="lede">
+            Talkiwi is a local-first desktop sidepanel for people who work with LLMs. It turns
+            what you say and what you touch into a structured prompt package instead of raw
+            transcripts.
+          </p>
+
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://github.com/JunJ-M/Talkiwi/releases"
+              >Open Releases</a
+            >
+            <a
+              class="btn btn-secondary"
+              href="https://github.com/JunJ-M/Talkiwi/blob/main/docs/guides/installation-and-permissions.md"
+              >Install Guide</a
+            >
+          </div>
+
+          <ul class="status-rail" aria-label="release status">
+            <li>macOS only</li>
+            <li>Apple Silicon + Intel</li>
+            <li>Local-first by default</li>
+            <li>Alpha release channel</li>
+          </ul>
+        </div>
+
+        <div class="hero-panel">
+          <div class="panel-head">
+            <span class="panel-label">Prompt Preview</span>
+            <span class="panel-chip">Structured Output</span>
+          </div>
+          <pre class="prompt-card"><code>## Task
+Fix the retry bug in the selected API helper.
+
+## Context
+- Selected code snippet
+- Screen capture with OCR
+- Current page title and URL
+
+## Requested Output
+1. Root cause analysis
+2. Safe patch
+3. Validation notes</code></pre>
+          <p class="panel-note">
+            The first public alpha should replace this mock prompt card with real screenshots and a
+            short capture GIF.
+          </p>
+        </div>
+      </header>
+
+      <main>
+        <section class="grid-three">
+          <article class="surface-card">
+            <p class="card-kicker">Download</p>
+            <h2>Ship tagged desktop releases, not ad-hoc builds.</h2>
+            <p>
+              GitHub Actions now covers CI, draft release creation, and a GitHub Pages download
+              surface. Publish from tags, keep rollback simple, and stop hand-carrying DMGs.
+            </p>
+          </article>
+
+          <article class="surface-card">
+            <p class="card-kicker">Permissions</p>
+            <h2>Microphone, screen recording, and accessibility are first-class support topics.</h2>
+            <p>
+              Install and recovery steps are documented so testers know what to grant, when to
+              restart the app, and what counts as an actual capture failure.
+            </p>
+          </article>
+
+          <article class="surface-card">
+            <p class="card-kicker">Operations</p>
+            <h2>Local telemetry and storage paths are documented before public launch.</h2>
+            <p>
+              Support issues now have a diagnostics contract: version, provider setup, session
+              folder, telemetry database, and permission state.
+            </p>
+          </article>
+        </section>
+
+        <section class="split-section">
+          <div>
+            <p class="section-kicker">Install Flow</p>
+            <h2>Three steps to get from release asset to working capture session.</h2>
+          </div>
+          <ol class="step-list">
+            <li>
+              <strong>Download the DMG.</strong>
+              Open the latest tag in GitHub Releases and pick the build that matches your Mac.
+            </li>
+            <li>
+              <strong>Move Talkiwi to Applications.</strong>
+              Launch from Finder and use <code>Open</code> if Gatekeeper blocks the first run.
+            </li>
+            <li>
+              <strong>Grant required permissions.</strong>
+              Microphone, Screen Recording, and Accessibility should all be confirmed before
+              capture troubleshooting starts.
+            </li>
+          </ol>
+        </section>
+
+        <section class="release-strip">
+          <div>
+            <p class="section-kicker">Release Contract</p>
+            <h2>What each public desktop release should guarantee.</h2>
+          </div>
+          <div class="pill-grid">
+            <span>Version aligned across package, Cargo, and Tauri config</span>
+            <span>CHANGELOG updated before tagging</span>
+            <span>Draft release created by workflow</span>
+            <span>Apple Silicon + Intel artifacts attached</span>
+            <span>Install and permissions docs linked</span>
+            <span>Previous DMG kept for rollback</span>
+          </div>
+        </section>
+
+        <section class="docs-grid">
+          <a
+            class="doc-link"
+            href="https://github.com/JunJ-M/Talkiwi/blob/main/CHANGELOG.md"
+          >
+            <span>CHANGELOG</span>
+            <strong>Track what actually shipped.</strong>
+          </a>
+          <a
+            class="doc-link"
+            href="https://github.com/JunJ-M/Talkiwi/blob/main/docs/guides/release-playbook.md"
+          >
+            <span>Release Playbook</span>
+            <strong>Tagging, secrets, notarization, and rollback.</strong>
+          </a>
+          <a
+            class="doc-link"
+            href="https://github.com/JunJ-M/Talkiwi/blob/main/docs/guides/installation-and-permissions.md"
+          >
+            <span>Install Guide</span>
+            <strong>Gatekeeper, privacy panes, and restart expectations.</strong>
+          </a>
+          <a
+            class="doc-link"
+            href="https://github.com/JunJ-M/Talkiwi/blob/main/docs/guides/compatibility-and-support.md"
+          >
+            <span>Compatibility</span>
+            <strong>What is supported now and what is not.</strong>
+          </a>
+          <a
+            class="doc-link"
+            href="https://github.com/JunJ-M/Talkiwi/blob/main/docs/guides/operations-and-observability.md"
+          >
+            <span>Operations</span>
+            <strong>Telemetry, diagnostics, upgrade, and rollback.</strong>
+          </a>
+          <a class="doc-link" href="https://github.com/JunJ-M/Talkiwi/blob/main/ROADMAP.md">
+            <span>Roadmap</span>
+            <strong>Release channel discipline and milestone focus.</strong>
+          </a>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>Talkiwi is an open-source macOS desktop project for AI-native workflows.</p>
+        <a href="https://github.com/JunJ-M/Talkiwi">View the repository</a>
+      </footer>
+    </div>
+  </body>
+</html>

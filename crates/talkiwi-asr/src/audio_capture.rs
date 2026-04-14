@@ -24,13 +24,14 @@ use std::sync::Arc;
 use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use ringbuf::traits::{Consumer, Producer, Split};
+use ringbuf::traits::{Consumer, Split};
 use ringbuf::HeapRb;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use talkiwi_core::traits::asr::AudioChunk;
 
+use crate::audio_input::SelectedAudioInput;
 use crate::audio_source::AudioSource;
 
 /// Target sample rate for ASR (Whisper expects 16kHz).
@@ -50,13 +51,19 @@ const READ_INTERVAL_MS: u64 = 100;
 pub struct AudioCapture {
     running: Arc<AtomicBool>,
     audio_thread: Option<thread::JoinHandle<()>>,
+    selected_input: SelectedAudioInput,
 }
 
 impl AudioCapture {
     pub fn new() -> Self {
+        Self::with_selected_input(SelectedAudioInput::default())
+    }
+
+    pub fn with_selected_input(selected_input: SelectedAudioInput) -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
             audio_thread: None,
+            selected_input,
         }
     }
 }
@@ -72,6 +79,7 @@ impl AudioSource for AudioCapture {
     async fn start(&mut self, tx: mpsc::Sender<AudioChunk>) -> anyhow::Result<()> {
         self.running.store(true, Ordering::SeqCst);
         let running = Arc::clone(&self.running);
+        let selected_input = self.selected_input.clone();
 
         // Use a oneshot to report startup errors from the audio thread
         let (err_tx, err_rx) = tokio::sync::oneshot::channel::<Option<String>>();
@@ -79,7 +87,7 @@ impl AudioSource for AudioCapture {
         let handle = thread::spawn(move || {
             // All cpal operations happen here, on this dedicated thread
             let host = cpal::default_host();
-            let device = match host.default_input_device() {
+            let device = match select_input_device(&host, selected_input.get()) {
                 Some(d) => d,
                 None => {
                     let _ = err_tx.send(Some("no default audio input device found".to_string()));
@@ -107,33 +115,20 @@ impl AudioSource for AudioCapture {
 
             // Create lock-free ring buffer
             let rb = HeapRb::<f32>::new(RING_BUFFER_CAPACITY);
-            let (mut producer, mut consumer) = rb.split();
+            let (producer, mut consumer) = rb.split();
 
             // Build cpal stream
             let channels = device_channels;
-            let stream = match device.build_input_stream(
-                &config.into(),
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let mono: Vec<f32> = data
-                        .chunks(channels)
-                        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-                        .collect();
-                    let written = producer.push_slice(&mono);
-                    if written < mono.len() {
-                        debug!(dropped = mono.len() - written, "ring buffer overflow");
-                    }
-                },
-                move |err| {
+            let stream =
+                match build_input_stream(&device, &config, channels, producer, move |err| {
                     error!(error = %err, "cpal input stream error");
-                },
-                None,
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = err_tx.send(Some(format!("failed to build input stream: {e}")));
-                    return;
-                }
-            };
+                }) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = err_tx.send(Some(format!("failed to build input stream: {e}")));
+                        return;
+                    }
+                };
 
             if let Err(e) = stream.play() {
                 let _ = err_tx.send(Some(format!("failed to play stream: {e}")));
@@ -276,6 +271,88 @@ fn resample_chunk(
     }
 
     Ok(output)
+}
+
+fn select_input_device(host: &cpal::Host, selected: Option<String>) -> Option<cpal::Device> {
+    if let Some(selected) = selected {
+        if let Ok(devices) = host.input_devices() {
+            for device in devices {
+                if device.name().map(|name| name == selected).unwrap_or(false) {
+                    return Some(device);
+                }
+            }
+        }
+        warn!(
+            selected,
+            "selected input device not found, falling back to default"
+        );
+    }
+
+    host.default_input_device()
+}
+
+fn build_input_stream<E>(
+    device: &cpal::Device,
+    config: &cpal::SupportedStreamConfig,
+    channels: usize,
+    mut producer: impl ringbuf::traits::Producer<Item = f32> + Send + 'static,
+    err_fn: E,
+) -> anyhow::Result<cpal::Stream>
+where
+    E: FnMut(cpal::StreamError) + Send + 'static,
+{
+    let stream_config: cpal::StreamConfig = config.clone().into();
+
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::F32 => device.build_input_stream(
+            &stream_config,
+            move |data: &[f32], _| push_mono(data, channels, &mut producer),
+            err_fn,
+            None,
+        )?,
+        cpal::SampleFormat::I16 => device.build_input_stream(
+            &stream_config,
+            move |data: &[i16], _| {
+                let converted: Vec<f32> = data
+                    .iter()
+                    .map(|sample| *sample as f32 / i16::MAX as f32)
+                    .collect();
+                push_mono(&converted, channels, &mut producer);
+            },
+            err_fn,
+            None,
+        )?,
+        cpal::SampleFormat::U16 => device.build_input_stream(
+            &stream_config,
+            move |data: &[u16], _| {
+                let converted: Vec<f32> = data
+                    .iter()
+                    .map(|sample| (*sample as f32 / u16::MAX as f32) * 2.0 - 1.0)
+                    .collect();
+                push_mono(&converted, channels, &mut producer);
+            },
+            err_fn,
+            None,
+        )?,
+        sample_format => anyhow::bail!("unsupported sample format: {sample_format:?}"),
+    };
+
+    Ok(stream)
+}
+
+fn push_mono(
+    data: &[f32],
+    channels: usize,
+    producer: &mut (impl ringbuf::traits::Producer<Item = f32> + ?Sized),
+) {
+    let mono: Vec<f32> = data
+        .chunks(channels)
+        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+        .collect();
+    let written = producer.push_slice(&mono);
+    if written < mono.len() {
+        debug!(dropped = mono.len() - written, "ring buffer overflow");
+    }
 }
 
 #[cfg(test)]

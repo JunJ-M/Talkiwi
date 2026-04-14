@@ -91,6 +91,7 @@ async fn ollama_full_engine_pipeline() {
         session_id: Uuid::new_v4(),
         timestamp: 1712900000000,
         session_offset_ms: 1000,
+        observed_offset_ms: Some(1000),
         duration_ms: None,
         action_type: ActionType::SelectionText,
         plugin_id: "builtin".to_string(),

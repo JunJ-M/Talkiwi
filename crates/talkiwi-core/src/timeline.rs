@@ -117,15 +117,17 @@ pub fn timeline_to_summary_bounded(timeline: &[TimelineEntry], max_chars: usize)
         "口语转录:"
     };
 
-    let mut kept_speech = Vec::new();
+    let mut kept_speech: Vec<String> = Vec::new();
     let mut budget = max_chars.saturating_sub(header.len() + 1);
     for line in speech_lines.iter().rev() {
         let line_cost = line.len() + 1;
-        if line_cost > budget && !kept_speech.is_empty() {
+        if line_cost > budget {
+            if kept_speech.is_empty() && budget > 0 {
+                kept_speech.push(truncate_spoken_content(line, budget));
+            }
             break;
-        }
-        if line_cost <= budget {
-            kept_speech.push(*line);
+        } else {
+            kept_speech.push((*line).to_string());
             budget = budget.saturating_sub(line_cost);
         }
     }
@@ -188,6 +190,26 @@ fn format_action_summary(payload: &crate::event::ActionPayload) -> String {
         crate::event::ActionPayload::FileAttach { file_name, .. } => {
             format!("File attached: {}", file_name)
         }
+        crate::event::ActionPayload::WindowFocus {
+            app_name,
+            window_title,
+        } => {
+            format!("Window focus: {} ({})", window_title, app_name)
+        }
+        crate::event::ActionPayload::ClickMouse {
+            app_name,
+            window_title,
+            button,
+            x,
+            y,
+        } => {
+            let app = app_name.as_deref().unwrap_or("unknown");
+            let title = window_title.as_deref().unwrap_or("unknown");
+            format!(
+                "Mouse click: {} at ({:.0}, {:.0}) in {} ({})",
+                button, x, y, title, app
+            )
+        }
         crate::event::ActionPayload::Custom(v) => {
             format!("Custom: {}", v)
         }
@@ -206,6 +228,15 @@ fn truncate(s: &str, max_len: usize) -> &str {
         end -= 1;
     }
     &s[..end]
+}
+
+fn truncate_spoken_content(line: &str, max_len: usize) -> String {
+    if let Some((_, spoken)) = line.split_once("] ") {
+        let spoken = spoken.trim();
+        return truncate(spoken, max_len).to_string();
+    }
+
+    truncate(line, max_len).to_string()
 }
 
 #[cfg(test)]
@@ -230,6 +261,7 @@ mod tests {
             session_id: Uuid::new_v4(),
             timestamp: 1712900000000 + offset,
             session_offset_ms: offset,
+            observed_offset_ms: Some(offset),
             duration_ms: None,
             action_type,
             plugin_id: "builtin".to_string(),

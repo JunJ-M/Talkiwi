@@ -53,4 +53,5 @@ apps/desktop/.vite/
 # ===========================
 # Docs (local drafts)
 # ===========================
-docs/
+docs/local/
+docs/**

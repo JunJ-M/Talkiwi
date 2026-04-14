@@ -178,7 +178,7 @@ crates/
 
 - macOS 13 Ventura 或更高版本
 - Rust 1.78+（`rustup install stable`）
-- Node.js 20+ 和 pnpm（`npm i -g pnpm`）
+- Node.js 20+ 和 npm 10+
 - [Ollama](https://ollama.ai/)（用于本地意图编译）
 
 ### 安装步骤
@@ -189,21 +189,38 @@ git clone https://github.com/JunJ-M/Talkiwi.git
 cd Talkiwi
 
 # 2. 安装前端依赖
-pnpm install
+npm ci --prefix apps/desktop
 
 # 3. 拉取本地意图编译模型
 ollama pull qwen2.5:7b
 
 # 4. 以开发模式运行
-pnpm tauri dev
+npm --prefix apps/desktop run tauri -- dev
 ```
 
 ### 构建正式版 DMG
 
 ```bash
-pnpm tauri build
+npm --prefix apps/desktop run tauri -- build
 # 输出位置：apps/desktop/src-tauri/target/release/bundle/dmg/
 ```
+
+## 发布与运维入口
+
+仓库现在已经补齐了公开桌面 Alpha 所需的发布与分发骨架。
+
+- [下载页](./website/index.html)
+- [GitHub Pages 站点](https://junj-m.github.io/Talkiwi/)（在仓库设置里启用 Pages 后可访问）
+- [站点源码](./website/index.html)
+- [GitHub Releases](https://github.com/JunJ-M/Talkiwi/releases)
+- [更新日志](./CHANGELOG.md)
+- [贡献指南](./CONTRIBUTING.md)
+- [路线图](./ROADMAP.md)
+- [安装与权限说明](./docs/guides/installation-and-permissions.md)
+- [发布手册](./docs/guides/release-playbook.md)
+- [兼容性与支持矩阵](./docs/guides/compatibility-and-support.md)
+- [运维与可观测性](./docs/guides/operations-and-observability.md)
+- [上线素材清单](./docs/guides/launch-assets-checklist.md)
 
 ### macOS 权限说明
 
@@ -267,15 +284,14 @@ Talkiwi 在设计上**以本地为优先**：
 欢迎贡献代码！请在开启 Pull Request 之前阅读 [贡献指南](./CONTRIBUTING.md)。
 
 ```bash
-# 运行 Rust 测试
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
-# 运行前端测试
-pnpm --filter desktop test
-
-# 代码检查
-cargo clippy --workspace
-pnpm --filter desktop lint
+npm --prefix apps/desktop run typecheck
+npm --prefix apps/desktop run test
+npm --prefix apps/desktop run build
+bash scripts/check-release-readiness.sh
 ```
 
 如果计划实现一个重要功能或进行架构调整，请先开 Issue 进行讨论。

@@ -140,7 +140,7 @@ Talkiwi は **Tauri 2.0** で構築されており、RustバックエンドとRe
 
 - macOS 13 Ventura 以降
 - Rust 1.78+（`rustup install stable`）
-- Node.js 20+ と pnpm（`npm i -g pnpm`）
+- Node.js 20+ と npm 10+
 - [Ollama](https://ollama.ai/)（ローカルインテントコンパイル用）
 
 ### インストール方法
@@ -151,19 +151,19 @@ git clone https://github.com/JunJ-M/Talkiwi.git
 cd Talkiwi
 
 # 2. フロントエンド依存関係をインストール
-pnpm install
+npm ci --prefix apps/desktop
 
 # 3. ローカルモデルをプル
 ollama pull qwen2.5:7b
 
 # 4. 開発モードで起動
-pnpm tauri dev
+npm --prefix apps/desktop run tauri -- dev
 ```
 
 ### リリースDMGのビルド
 
 ```bash
-pnpm tauri build
+npm --prefix apps/desktop run tauri -- build
 # 出力先: apps/desktop/src-tauri/target/release/bundle/dmg/
 ```
 

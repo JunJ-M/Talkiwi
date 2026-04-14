@@ -178,7 +178,7 @@ crates/
 
 - macOS 13 Ventura or later
 - Rust 1.78+ (`rustup install stable`)
-- Node.js 20+ and pnpm (`npm i -g pnpm`)
+- Node.js 20+ and npm 10+
 - [Ollama](https://ollama.ai/) (for local intent compilation)
 
 ### Installation
@@ -189,21 +189,38 @@ git clone https://github.com/JunJ-M/Talkiwi.git
 cd Talkiwi
 
 # 2. Install frontend dependencies
-pnpm install
+npm ci --prefix apps/desktop
 
 # 3. Pull a local model for the intent compiler
 ollama pull qwen2.5:7b
 
 # 4. Run in development mode
-pnpm tauri dev
+npm --prefix apps/desktop run tauri -- dev
 ```
 
 ### Build a release DMG
 
 ```bash
-pnpm tauri build
+npm --prefix apps/desktop run tauri -- build
 # Output: apps/desktop/src-tauri/target/release/bundle/dmg/
 ```
+
+## Release & Operations
+
+The repository now includes the release and distribution scaffold needed to ship a public desktop alpha.
+
+- [Download page](./website/index.html)
+- [GitHub Pages site](https://junj-m.github.io/Talkiwi/) _(after enabling Pages in repository settings)_
+- [Site source](./website/index.html)
+- [GitHub Releases](https://github.com/JunJ-M/Talkiwi/releases)
+- [Changelog](./CHANGELOG.md)
+- [Contributing Guide](./CONTRIBUTING.md)
+- [Roadmap](./ROADMAP.md)
+- [Installation & Permissions](./docs/guides/installation-and-permissions.md)
+- [Release Playbook](./docs/guides/release-playbook.md)
+- [Compatibility & Support](./docs/guides/compatibility-and-support.md)
+- [Operations & Observability](./docs/guides/operations-and-observability.md)
+- [Launch Asset Checklist](./docs/guides/launch-assets-checklist.md)
 
 ### macOS Permissions
 
@@ -267,15 +284,14 @@ Talkiwi is **local-first by design**:
 Contributions are welcome! Please read the [Contributing Guide](./CONTRIBUTING.md) before opening a pull request.
 
 ```bash
-# Run Rust tests
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
-# Run frontend tests
-pnpm --filter desktop test
-
-# Lint
-cargo clippy --workspace
-pnpm --filter desktop lint
+npm --prefix apps/desktop run typecheck
+npm --prefix apps/desktop run test
+npm --prefix apps/desktop run build
+bash scripts/check-release-readiness.sh
 ```
 
 Please open an issue before starting on a significant feature or architectural change.

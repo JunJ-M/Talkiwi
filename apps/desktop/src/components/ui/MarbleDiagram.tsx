@@ -17,6 +17,8 @@ const MARBLE_COLORS: Record<string, string> = {
   "page.current": "oklch(68% 0.18 60)",
   "click.link": "oklch(68% 0.21 190)",
   "file.attach": "oklch(55% 0.05 250)",
+  "window.focus": "oklch(72% 0.09 95)",
+  "click.mouse": "oklch(74% 0.18 35)",
 };
 
 function formatOffset(ms: number): string {
@@ -42,6 +44,10 @@ function getDetail(event: ActionEvent): string {
       return (p.to_url as string) ?? "";
     case "file.attach":
       return (p.file_name as string) ?? "";
+    case "window.focus":
+      return `${(p.window_title as string) ?? ""} ${(p.app_name as string) ?? ""}`.trim();
+    case "click.mouse":
+      return `${(p.button as string) ?? "click"} @ ${Math.round((p.x as number) ?? 0)},${Math.round((p.y as number) ?? 0)}`;
     default:
       return event.semantic_hint ?? event.action_type;
   }

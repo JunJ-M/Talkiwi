@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use talkiwi_core::event::{ActionEvent, ActionPayload, ClipboardContentType};
 use talkiwi_core::locale::AssemblerLabels;
-use talkiwi_core::output::{ArtifactRef, IntentOutput, Reference};
+use talkiwi_core::output::{ArtifactRef, IntentCategory, IntentOutput, Reference, RiskLevel};
 use talkiwi_core::traits::intent::IntentRaw;
 use uuid::Uuid;
 
@@ -33,6 +33,13 @@ pub fn assemble(
         session_id,
         task: raw.task.clone(),
         intent: raw.intent.clone(),
+        intent_category: IntentCategory::from_llm_output(&raw.intent),
+        output_confidence: if references.is_empty() { 0.45 } else { 0.7 },
+        risk_level: if references.is_empty() {
+            RiskLevel::High
+        } else {
+            RiskLevel::Medium
+        },
         constraints: raw.constraints.clone(),
         missing_context: raw.missing_context.clone(),
         restructured_speech: raw.restructured_speech.clone(),
@@ -200,7 +207,10 @@ fn format_payload(payload: &ActionPayload, labels: &AssemblerLabels) -> String {
                 Some(u) => format!("[{}]({})", title, u),
                 None => title.clone(),
             };
-            format!("**{}**: {} ({})\n", labels.current_page_label, link, app_name)
+            format!(
+                "**{}**: {} ({})\n",
+                labels.current_page_label, link, app_name
+            )
         }
         ActionPayload::ClickLink { to_url, title, .. } => {
             let title_str = title.as_deref().unwrap_or(to_url.as_str());
@@ -225,6 +235,26 @@ fn format_payload(payload: &ActionPayload, labels: &AssemblerLabels) -> String {
                 s.push_str(&format!("```\n{}\n```\n", p));
             }
             s
+        }
+        ActionPayload::WindowFocus {
+            app_name,
+            window_title,
+        } => {
+            format!("**窗口焦点**: {} ({})\n", window_title, app_name)
+        }
+        ActionPayload::ClickMouse {
+            app_name,
+            window_title,
+            button,
+            x,
+            y,
+        } => {
+            let app_name = app_name.as_deref().unwrap_or("unknown");
+            let window_title = window_title.as_deref().unwrap_or("unknown");
+            format!(
+                "**鼠标点击**: {} ({:.0}, {:.0}) [{} / {}]\n",
+                button, x, y, app_name, window_title
+            )
         }
         ActionPayload::Custom(val) => {
             format!("**{}**: {}\n", labels.custom_event_label, val)
@@ -264,6 +294,21 @@ fn summarize_payload(payload: &ActionPayload, labels: &AssemblerLabels) -> Strin
         ActionPayload::FileAttach { file_name, .. } => {
             labels.attachment_summary.replace("{name}", file_name)
         }
+        ActionPayload::WindowFocus {
+            app_name,
+            window_title,
+        } => format!("Focused {} ({})", window_title, app_name),
+        ActionPayload::ClickMouse {
+            app_name,
+            window_title,
+            button,
+            ..
+        } => format!(
+            "Mouse click {} in {} ({})",
+            button,
+            window_title.as_deref().unwrap_or("unknown"),
+            app_name.as_deref().unwrap_or("unknown")
+        ),
         ActionPayload::Custom(_) => labels.custom_event_summary.clone(),
     }
 }
@@ -310,6 +355,7 @@ mod tests {
             session_id: Uuid::new_v4(),
             timestamp: 1712900000000,
             session_offset_ms: 3000,
+            observed_offset_ms: Some(3000),
             duration_ms: None,
             action_type,
             plugin_id: "builtin".to_string(),

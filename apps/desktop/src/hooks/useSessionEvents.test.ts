@@ -27,12 +27,15 @@ const mockOutput: IntentOutput = {
   session_id: "session-123",
   task: "Test task",
   intent: "analyze",
+  intent_category: "analyze",
   constraints: [],
   missing_context: [],
   restructured_speech: "Test speech",
   final_markdown: "## Test",
   artifacts: [],
   references: [],
+  output_confidence: 0.72,
+  risk_level: "medium",
 };
 
 describe("useSessionEvents", () => {
