@@ -22,7 +22,9 @@
         "transparent": true,
         "alwaysOnTop": true,
         "resizable": false,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "acceptFirstMouse": true,
+        "focus": true
       },
       {
         "label": "editor",
@@ -54,6 +56,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "infoPlist": "Info.plist"
+    }
   }
 }

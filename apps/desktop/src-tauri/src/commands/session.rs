@@ -15,8 +15,43 @@ pub async fn session_start(state: State<'_, AppState>) -> Result<String, String>
     let (speak_tx, mut speak_rx) = mpsc::channel::<SpeakSegment>(64);
     let (action_tx, mut action_rx) = mpsc::channel::<ActionEvent>(256);
 
-    // Create ASR provider from config
-    let asr_provider = crate::init_asr_provider_from_state(&state).map_err(|e| e.to_string())?;
+    // Create ASR provider from config. If the configured provider is not
+    // available (e.g. whisper model not downloaded yet), we *still* start the
+    // session using a no-op NullAsrProvider so the audio capture pipeline
+    // (waveform, VAD, levels) runs and the user sees feedback. A warning is
+    // emitted separately so the UI can surface that transcription is disabled.
+    let configured_provider =
+        crate::init_asr_provider_from_state(&state).map_err(|e| e.to_string())?;
+
+    let asr_provider: Box<dyn talkiwi_core::traits::asr::AsrProvider> =
+        if configured_provider.is_available().await {
+            configured_provider
+        } else {
+            let provider_id = configured_provider.id().to_string();
+            let hint = match provider_id.as_str() {
+                "whisper-local" => {
+                    "Whisper model file is missing. Recording will run without transcription \
+                     until you download a model from Settings."
+                }
+                "openai-whisper" => {
+                    "OpenAI Whisper is not available. Recording will run without transcription \
+                     until the cloud API key is configured in Settings."
+                }
+                _ => {
+                    "ASR provider is not available. Recording will run without transcription \
+                     until you fix the settings."
+                }
+            };
+            tracing::warn!(
+                provider = %provider_id,
+                "ASR provider unavailable — starting session with NullAsrProvider fallback"
+            );
+            let _ = state
+                .app_handle
+                .emit("talkiwi://asr-unavailable", hint);
+            Box::new(talkiwi_asr::NullAsrProvider::new())
+        };
+
     let input_gain_db = state
         .config
         .lock()

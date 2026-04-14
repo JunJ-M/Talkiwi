@@ -19,6 +19,7 @@ import type {
   SessionState,
   WidgetSnapshot,
 } from "../types";
+import { BIN_COUNT } from "./timelineGeometry";
 
 type BallState = "idle" | "recording" | "processing" | "ready";
 type ToggleRequestState = "idle" | "starting" | "stopping";
@@ -64,7 +65,15 @@ function normalizeState(payload: SessionState): BallState {
 function currentPanelHeight(
   state: BallState,
   requestState: ToggleRequestState,
+  hasError: boolean,
 ): number {
+  // When an error is surfaced, keep the panel tall enough to show the
+  // banner plus any partial content below. Otherwise the window collapses
+  // to IDLE_HEIGHT and the canvas looks empty right after a failed stop.
+  if (hasError) {
+    return READY_HEIGHT;
+  }
+
   if (requestState !== "idle" || state === "processing") {
     return PROCESSING_HEIGHT;
   }
@@ -83,6 +92,7 @@ function currentPanelHeight(
 async function syncBallWindow(
   state: BallState,
   requestState: ToggleRequestState,
+  hasError: boolean,
 ) {
   if (!isTauriRuntime()) {
     return;
@@ -91,7 +101,7 @@ async function syncBallWindow(
   const window = getCurrentWebviewWindow();
   const size = new LogicalSize(
     PANEL_WIDTH,
-    currentPanelHeight(state, requestState),
+    currentPanelHeight(state, requestState, hasError),
   );
 
   await window.setSize(size);
@@ -127,7 +137,7 @@ function mockStateFromMode(mode: MockPreviewMode): BallState {
 }
 
 function buildMockBars(active: boolean): number[] {
-  return Array.from({ length: 120 }, (_, index) => {
+  return Array.from({ length: BIN_COUNT }, (_, index) => {
     if (!active) {
       return 0;
     }
@@ -139,7 +149,7 @@ function buildMockBars(active: boolean): number[] {
 }
 
 function buildMockSpeechBins(active: boolean): number[] {
-  return Array.from({ length: 120 }, (_, index) => {
+  return Array.from({ length: BIN_COUNT }, (_, index) => {
     if (!active) {
       return 0;
     }
@@ -257,6 +267,7 @@ export function useBallState() {
   const [inputs, setInputs] = useState<AudioInputInfo[]>([]);
   const [selectedMic, setSelectedMic] = useState<string | null>(null);
   const [requestState, setRequestState] = useState<ToggleRequestState>("idle");
+  const [error, setError] = useState<string | null>(null);
   const stateRef = useRef<BallState>("idle");
   const requestStateRef = useRef<ToggleRequestState>("idle");
 
@@ -339,20 +350,26 @@ export function useBallState() {
       showEditor();
     });
 
+    const unlistenAsrWarn = listen<string>(
+      "talkiwi://asr-unavailable",
+      (event) => {
+        setError(event.payload);
+      },
+    );
+
     return () => {
       unlistenState.then((fn) => fn());
       unlistenSnapshot.then((fn) => fn());
       unlistenOutput.then((fn) => fn());
+      unlistenAsrWarn.then((fn) => fn());
     };
   }, [browserPreviewMock, updateState]);
 
   useEffect(() => {
-    syncBallWindow(state, requestState).catch(
-      (error) => {
-        console.error("Failed to resize ball window:", error);
-      },
-    );
-  }, [requestState, state]);
+    syncBallWindow(state, requestState, error !== null).catch((resizeErr) => {
+      console.error("Failed to resize ball window:", resizeErr);
+    });
+  }, [requestState, state, error]);
 
   const toggle = useCallback(async () => {
     if (requestStateRef.current !== "idle") {
@@ -380,12 +397,19 @@ export function useBallState() {
 
     if (current === "idle" || current === "ready") {
       try {
+        setError(null);
         updateRequestState("starting");
-        updateState("recording");
+        // NOTE: do not set state to "recording" preemptively.
+        // The backend transitions via session_start → widget-snapshot event.
+        // Setting it here caused silent failures to look like successful
+        // recording when the backend erroneously returned while the mic/model
+        // was not actually running.
         await sessionStart();
         await syncStateFromBackend();
       } catch (e) {
-        console.error("Failed to start session:", e);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("Failed to start session:", msg);
+        setError(msg);
         try {
           await syncStateFromBackend();
         } catch (syncError) {
@@ -397,12 +421,15 @@ export function useBallState() {
       }
     } else if (current === "recording") {
       try {
+        setError(null);
         updateRequestState("stopping");
         updateState("processing");
         await sessionStop();
         await syncStateFromBackend();
       } catch (e) {
-        console.error("Failed to stop session:", e);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("Failed to stop session:", msg);
+        setError(msg);
         try {
           await syncStateFromBackend();
         } catch (syncError) {
@@ -419,6 +446,8 @@ export function useBallState() {
     updateRequestState,
     updateState,
   ]);
+
+  const clearError = useCallback(() => setError(null), []);
 
   const selectMic = useCallback(
     async (idOrName: string) => {
@@ -444,5 +473,7 @@ export function useBallState() {
     expanded,
     canToggle: requestState === "idle" && state !== "processing",
     requestState,
+    error,
+    clearError,
   };
 }

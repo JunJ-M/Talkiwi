@@ -23,6 +23,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 rusqlite = { version = "0.31", features = ["bundled"] }

@@ -18,16 +18,22 @@
   --tki-slate-300: #cbd5e1;
   --tki-slate-400: #94a3b8;
   --tki-slate-500: #64748b;
+  --tki-slate-700: #334155;
   --tki-slate-800: #1e293b;
+  --tki-slate-900: #0f172a;
   --tki-slate-950: #020617;
 
   --tki-blue-200: #bfdbfe;
   --tki-blue-400: #60a5fa;
   --tki-blue-500: #3b82f6;
+  --tki-blue-600: #2563eb;
+  --tki-purple-400: #c084fc;
+  --tki-purple-500: #a855f7;
+  --tki-purple-600: #9333ea;
 
-  --tki-glass-bg: rgba(10, 15, 18, 0.75);
-  --tki-glass-blur: 24px;
-  --tki-glass-border: rgba(255, 255, 255, 0.08);
+  --tki-panel-bg: #0f172a;
+  --tki-track-bg: #020617;
+  --tki-mac-border: 1px solid rgba(255, 255, 255, 0.08);
 
   --tki-font-headline: "Plus Jakarta Sans", system-ui, sans-serif;
   --tki-font-body: "Inter", system-ui, sans-serif;
@@ -70,6 +76,10 @@ html, body, #ball-root {
   font-size: 14px;
 }
 
+.msi--md {
+  font-size: 16px;
+}
+
 .msi--lg {
   font-size: 18px;
 }
@@ -89,16 +99,14 @@ html, body, #ball-root {
   color: #e2e8f0;
 }
 
-/* --- Glass Panel --- */
+/* --- Panel (solid Mac-style dark) --- */
 .widget-panel {
   width: 100%;
   display: flex;
   flex-direction: column;
   border-radius: 1.5rem;
-  border: 1px solid var(--tki-glass-border);
-  background: var(--tki-glass-bg);
-  backdrop-filter: blur(var(--tki-glass-blur));
-  -webkit-backdrop-filter: blur(var(--tki-glass-blur));
+  border: var(--tki-mac-border);
+  background: var(--tki-panel-bg);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
@@ -109,7 +117,7 @@ html, body, #ball-root {
   flex-direction: column;
   padding: 1.5rem 1.25rem;
   gap: 1.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--tki-slate-800);
 }
 
 .widget-top-bar {
@@ -139,9 +147,9 @@ html, body, #ball-root {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.15em;
   color: var(--tki-slate-500);
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .widget-header-actions {
@@ -190,7 +198,7 @@ html, body, #ball-root {
 }
 
 .widget-record-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.97);
 }
 
 .widget-record-btn:disabled {
@@ -201,7 +209,7 @@ html, body, #ball-root {
 
 .widget-record-btn--idle {
   background: var(--tki-surface-tint);
-  box-shadow: 0 10px 15px -3px rgba(0, 88, 187, 0.2);
+  box-shadow: 0 10px 15px -3px rgba(0, 88, 187, 0.25);
 }
 
 .widget-record-btn--idle:hover {
@@ -271,6 +279,50 @@ html, body, #ball-root {
   opacity: 0.5;
 }
 
+/* --- Error banner --- */
+.widget-error-banner {
+  margin-top: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 0.75rem;
+  background: rgba(179, 27, 37, 0.15);
+  border: 1px solid rgba(179, 27, 37, 0.35);
+  color: #fecaca;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.widget-error-banner .material-symbols-outlined {
+  font-size: 16px;
+  color: #fca5a5;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.widget-error-banner-text {
+  flex: 1;
+}
+
+.widget-error-banner-close {
+  background: transparent;
+  border: none;
+  color: #fca5a5;
+  cursor: pointer;
+  padding: 0;
+  width: 1rem;
+  height: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.widget-error-banner-close .material-symbols-outlined {
+  font-size: 14px;
+}
+
 /* --- Canvas (scrollable area) --- */
 .widget-canvas {
   flex: 1;
@@ -328,26 +380,43 @@ html, body, #ball-root {
 /* --- Timeline --- */
 .widget-timeline {
   position: relative;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--tki-track-bg);
   border-radius: 1rem;
   padding: 1rem;
   overflow: hidden;
-  border: 1px solid var(--tki-glass-border);
-  min-height: 120px;
+  border: var(--tki-mac-border);
+  min-height: 160px;
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+}
+
+.widget-timeline-labels {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  gap: 1rem;
+  position: relative;
+  z-index: 10;
+}
+
+.widget-timeline-rail {
+  position: relative;
+  min-width: 0;
 }
 
 .widget-playhead {
   position: absolute;
-  left: 33.33%;
+  left: 0%;
   top: 0;
   bottom: 0;
   width: 2px;
   background: var(--tki-blue-500);
   z-index: 20;
   box-shadow: 0 0 15px rgba(0, 88, 187, 0.5);
+  /* Smooth out the 100ms snapshot cadence into continuous motion. */
+  transition: left 120ms linear;
+  pointer-events: none;
 }
 
 .widget-timeline-tracks {
@@ -356,70 +425,210 @@ html, body, #ball-root {
   gap: 1rem;
   position: relative;
   z-index: 10;
+  min-width: 0;
 }
 
 .widget-track {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+  min-width: 0;
 }
 
 .widget-track-label {
-  width: 3rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
   font-size: 10px;
   font-weight: 700;
   color: var(--tki-slate-500);
   letter-spacing: -0.02em;
-  flex-shrink: 0;
 }
 
 .widget-track-content {
-  flex: 1;
+  position: relative;
+  width: 100%;
   height: 2.5rem;
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  min-width: 0;
 }
 
-/* SPEAK segments */
-.widget-speak-block {
+.widget-track-baseline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--tki-slate-800);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+/* SPEAK track — live audio spectrum while recording.
+   Renders all BIN_COUNT (120) bins edge-to-edge with equal flex widths
+   so bin[0] lines up with windowStart on the left and bin[119] lines
+   up with (windowStart + WINDOW_MS) on the right, matching the same
+   timeline coordinate system used by the playhead and ACTION track. */
+.widget-live-spectrum {
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: stretch;
+  gap: 0;
   height: 2rem;
-  background: linear-gradient(90deg, var(--tki-primary) 0%, var(--tki-primary-fixed) 100%);
-  border-radius: 0.5rem;
-  padding: 0 0.75rem;
+  padding: 0;
+}
+
+.widget-live-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 3px;
+  background: var(--tki-slate-700);
+  border-radius: 1px;
+  transition: height 120ms ease-out, background 120ms ease-out;
+  margin-right: 1px;
+}
+
+.widget-live-bar:last-child {
+  margin-right: 0;
+}
+
+.widget-live-spectrum--active .widget-live-bar {
+  background: var(--tki-blue-400);
+}
+
+.widget-live-bar--speech {
+  background: var(--tki-blue-500);
+}
+
+.widget-live-spectrum--active .widget-live-bar--speech {
+  background: var(--tki-blue-500);
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.4);
+}
+
+.widget-live-spectrum--ghost {
+  opacity: 0.72;
+}
+
+.widget-live-spectrum--ghost .widget-live-bar {
+  background: rgba(96, 165, 250, 0.14);
+}
+
+.widget-live-spectrum--ghost .widget-live-bar--speech {
+  background: rgba(168, 85, 247, 0.2);
+  box-shadow: none;
+}
+
+/* SPEAK track — mini-waveform segments */
+.widget-speak-track {
+  position: relative;
+}
+
+.widget-speak-spectrum-underlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
-  font-size: 9px;
-  font-weight: 500;
+}
+
+.widget-speak-segments {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+
+.widget-speak-segment {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  height: 2rem;
+  min-width: 12px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 0.75rem;
+  border: 1px solid transparent;
+}
+
+.widget-speak-segment-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  width: 100%;
+  height: 100%;
+}
+
+.widget-speak-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  border-radius: 1px;
+}
+
+.widget-speak-segment--primary {
+  background: rgba(0, 76, 164, 0.18);
+  border-color: rgba(0, 88, 187, 0.3);
+}
+
+.widget-speak-segment--primary .widget-speak-bar {
+  background: var(--tki-blue-400);
+}
+.widget-speak-segment--primary .widget-speak-bar-strong {
+  background: var(--tki-blue-500);
+}
+.widget-speak-segment--primary .widget-speak-bar-dim {
+  background: var(--tki-blue-600);
+}
+.widget-speak-segment--primary .widget-speak-segment-label {
+  background: var(--tki-blue-600);
+}
+
+.widget-speak-segment--secondary {
+  background: rgba(116, 14, 194, 0.18);
+  border-color: rgba(129, 38, 207, 0.28);
+}
+
+.widget-speak-segment--secondary .widget-speak-bar {
+  background: var(--tki-purple-500);
+}
+.widget-speak-segment--secondary .widget-speak-bar-strong {
+  background: var(--tki-purple-400);
+}
+.widget-speak-segment--secondary .widget-speak-bar-dim {
+  background: var(--tki-purple-600);
+}
+.widget-speak-segment--secondary .widget-speak-segment-label {
+  background: var(--tki-purple-600);
+}
+
+.widget-speak-segment-label {
+  position: absolute;
+  top: -16px;
+  left: 0;
+  font-size: 8px;
   color: #ffffff;
+  padding: 1px 4px;
+  border-radius: 2px;
   white-space: nowrap;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 45%;
-  flex-shrink: 0;
 }
 
-.widget-speak-block + .widget-speak-block {
-  border-left: 2px solid rgba(255, 255, 255, 0.2);
-}
-
-.widget-track-gap {
-  flex: 1;
-  height: 2px;
-  background: var(--tki-slate-800);
-}
-
-/* ACTION icons */
-.widget-action-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--tki-slate-800);
-  flex-shrink: 0;
+/* ACTION track — icons are absolutely positioned by time offset so
+   each event lands on the same rolling [windowStart, windowStart +
+   WINDOW_MS] timeline as the SPEAK bars and the playhead. */
+.widget-action-track {
+  position: relative;
 }
 
 .widget-action-icon {
+  position: absolute;
+  top: 50%;
+  /* `left` is set inline from (pin.t - windowStart) / WINDOW_MS.
+     `translate(-50%, -50%)` centres the icon on its time point. */
+  transform: translate(-50%, -50%);
   width: 2rem;
   height: 2rem;
   border-radius: 0.75rem;
@@ -427,6 +636,7 @@ html, body, #ball-root {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: left 120ms linear;
 }
 
 .widget-action-icon--tertiary {
@@ -459,10 +669,10 @@ html, body, #ball-root {
 
 /* --- Compilation --- */
 .widget-compilation {
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--tki-track-bg);
   border-radius: 1rem;
   padding: 1.25rem;
-  border: 1px solid var(--tki-glass-border);
+  border: var(--tki-mac-border);
   font-family: var(--tki-font-mono);
   font-size: 0.75rem;
   line-height: 1.65;
@@ -478,8 +688,13 @@ html, body, #ball-root {
   color: var(--tki-slate-300);
 }
 
+.widget-compilation-body > div {
+  margin-bottom: 0.125rem;
+}
+
 .widget-compilation-num {
   color: var(--tki-blue-400);
+  margin-right: 0.125rem;
 }
 
 .widget-compilation-ref {
@@ -492,7 +707,7 @@ html, body, #ball-root {
   color: #ffffff;
   border: 1px solid rgba(255, 255, 255, 0.1);
   font-style: italic;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   vertical-align: baseline;
 }
 
@@ -501,7 +716,7 @@ html, body, #ball-root {
 }
 
 .widget-compilation-keyword {
-  color: var(--tki-secondary);
+  color: #dbb4ff;
 }
 
 .widget-compilation-dots {
@@ -527,10 +742,8 @@ html, body, #ball-root {
 /* --- Footer --- */
 .widget-footer {
   padding: 1.5rem;
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--tki-slate-900);
+  border-top: 1px solid var(--tki-slate-800);
   display: flex;
   align-items: center;
   gap: 0.75rem;

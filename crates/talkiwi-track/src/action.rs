@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use talkiwi_core::clock::SessionClock;
 use talkiwi_core::event::ActionEvent;
@@ -29,6 +30,11 @@ pub struct ActionTrack {
     /// Aggregator task handle — joined on stop.
     agg_handle: Option<tokio::task::JoinHandle<()>>,
     capture_health: Arc<Mutex<HashMap<String, CaptureHealthEntry>>>,
+    /// The active session id. Captures are constructed once with a
+    /// placeholder id and never updated, so we rewrite event.session_id
+    /// in the aggregator loop to match the active session. Without this,
+    /// the db FOREIGN KEY on action_events.session_id fails at save time.
+    active_session_id: Option<Uuid>,
 }
 
 impl ActionTrack {
@@ -47,6 +53,7 @@ impl ActionTrack {
             agg_tx: None,
             agg_handle: None,
             capture_health: Arc::new(Mutex::new(HashMap::new())),
+            active_session_id: None,
         }
     }
 
@@ -59,8 +66,13 @@ impl ActionTrack {
     /// Start all registered captures. Permission-denied captures are skipped.
     ///
     /// Events from all captures are aggregated and forwarded to `event_tx`.
+    ///
+    /// `session_id` is the active session identifier. Captures are registered
+    /// once at app init with a placeholder id, so every event that flows
+    /// through the aggregator has its `session_id` rewritten to match.
     pub async fn start(
         &mut self,
+        session_id: Uuid,
         event_tx: mpsc::Sender<ActionEvent>,
         clock: SessionClock,
         preview_tx: Option<mpsc::Sender<PreviewEvent>>,
@@ -68,6 +80,7 @@ impl ActionTrack {
         self.clock = clock.clone();
         self.event_tx = Some(event_tx.clone());
         self.preview_tx = preview_tx.clone();
+        self.active_session_id = Some(session_id);
         self.events.lock().await.clear();
         self.capture_health.lock().await.clear();
 
@@ -134,8 +147,14 @@ impl ActionTrack {
 
         let forward_tx = event_tx;
         let preview_tx_clone = preview_tx;
+        let aggregator_session_id = session_id;
         let handle = tokio::spawn(async move {
-            while let Some(event) = agg_rx.recv().await {
+            while let Some(mut event) = agg_rx.recv().await {
+                // Rewrite session_id — captures carry a nil placeholder
+                // set at registration time; the real active session is
+                // only known here, at the aggregator boundary.
+                event.session_id = aggregator_session_id;
+
                 events.lock().await.push(event.clone());
                 {
                     let mut guard = health_state.lock().await;
@@ -203,6 +222,7 @@ impl ActionTrack {
         self.event_tx = None;
         self.preview_tx = None;
         self.agg_tx = None;
+        self.active_session_id = None;
 
         if let Some(handle) = self.agg_handle.take() {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
@@ -217,6 +237,11 @@ impl ActionTrack {
         let offset_ms = self.clock.elapsed_ms();
         event.session_offset_ms = offset_ms;
         event.observed_offset_ms = Some(offset_ms);
+        // Same session_id normalization as the aggregator — injected
+        // events from the commands layer may carry a stale id.
+        if let Some(active) = self.active_session_id {
+            event.session_id = active;
+        }
         self.events.lock().await.push(event.clone());
         self.bump_health(&event.plugin_id, offset_ms).await;
 
@@ -435,7 +460,10 @@ mod tests {
         )));
 
         let (tx, _rx) = mpsc::channel(16);
-        track.start(tx, SessionClock::new(), None).await.unwrap();
+        track
+            .start(Uuid::new_v4(), tx, SessionClock::new(), None)
+            .await
+            .unwrap();
 
         assert!(track.elapsed_ms() < 100);
 
@@ -456,7 +484,10 @@ mod tests {
         )));
 
         let (tx, _rx) = mpsc::channel(16);
-        track.start(tx, SessionClock::new(), None).await.unwrap();
+        track
+            .start(Uuid::new_v4(), tx, SessionClock::new(), None)
+            .await
+            .unwrap();
         let health = track.capture_health().await;
         assert!(health.iter().any(|entry| entry.capture_id == "granted"));
         assert!(health
@@ -467,21 +498,74 @@ mod tests {
 
     #[tokio::test]
     async fn action_track_inject_event_stores_and_forwards() {
+        let session_id = Uuid::new_v4();
         let mut track = ActionTrack::new();
         let (tx, mut rx) = mpsc::channel(16);
-        track.start(tx, SessionClock::new(), None).await.unwrap();
+        track
+            .start(session_id, tx, SessionClock::new(), None)
+            .await
+            .unwrap();
 
-        let session_id = Uuid::new_v4();
-        let event = make_test_event(session_id);
+        // Inject an event whose session_id differs from the active one —
+        // ActionTrack should rewrite it so downstream sees the active id.
+        let stale_session_id = Uuid::new_v4();
+        let event = make_test_event(stale_session_id);
         track.inject_event(event.clone()).await.unwrap();
 
         let received = rx.recv().await.unwrap();
         assert_eq!(received.id, event.id);
-        assert_eq!(received.session_id, session_id);
+        assert_eq!(
+            received.session_id, session_id,
+            "session_id should be normalized to the active session"
+        );
 
         let events = track.stop().await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id, event.id);
+        assert_eq!(events[0].session_id, session_id);
+    }
+
+    #[tokio::test]
+    async fn action_track_rewrites_session_id_from_captures() {
+        // Captures are registered with a nil placeholder and emit events
+        // carrying that stale id. The aggregator must rewrite each event's
+        // session_id to match the active session before forwarding.
+        let active = Uuid::new_v4();
+        let stale = Uuid::nil();
+        let test_events = vec![make_test_event(stale), make_test_event(stale)];
+
+        let mut track = ActionTrack::new();
+        track.register(Box::new(EventEmittingCapture::new(
+            "builtin.clipboard",
+            test_events,
+        )));
+
+        let (tx, mut rx) = mpsc::channel(16);
+        track
+            .start(active, tx, SessionClock::new(), None)
+            .await
+            .unwrap();
+
+        let mut received = Vec::new();
+        for _ in 0..2 {
+            if let Some(event) =
+                tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv()).await
+                    .ok()
+                    .flatten()
+            {
+                received.push(event);
+            }
+        }
+
+        assert_eq!(received.len(), 2);
+        for event in &received {
+            assert_eq!(event.session_id, active);
+        }
+
+        let stored = track.stop().await.unwrap();
+        for event in &stored {
+            assert_eq!(event.session_id, active);
+        }
     }
 
     #[tokio::test]
@@ -496,7 +580,10 @@ mod tests {
         )));
 
         let (tx, mut rx) = mpsc::channel(16);
-        track.start(tx, SessionClock::new(), None).await.unwrap();
+        track
+            .start(Uuid::new_v4(), tx, SessionClock::new(), None)
+            .await
+            .unwrap();
 
         let mut received = Vec::new();
         for _ in 0..2 {
@@ -528,7 +615,10 @@ mod tests {
         )));
 
         let (tx1, mut rx1) = mpsc::channel(16);
-        track.start(tx1, SessionClock::new(), None).await.unwrap();
+        track
+            .start(session_id, tx1, SessionClock::new(), None)
+            .await
+            .unwrap();
         let first = tokio::time::timeout(std::time::Duration::from_millis(500), rx1.recv())
             .await
             .ok()
@@ -537,7 +627,10 @@ mod tests {
         let _ = track.stop().await.unwrap();
 
         let (tx2, mut rx2) = mpsc::channel(16);
-        track.start(tx2, SessionClock::new(), None).await.unwrap();
+        track
+            .start(session_id, tx2, SessionClock::new(), None)
+            .await
+            .unwrap();
         let second = tokio::time::timeout(std::time::Duration::from_millis(500), rx2.recv())
             .await
             .ok()

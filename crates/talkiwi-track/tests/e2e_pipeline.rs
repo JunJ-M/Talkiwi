@@ -170,7 +170,7 @@ async fn e2e_full_pipeline_mock() {
         .await
         .unwrap();
     action_track
-        .start(action_tx, SessionClock::new(), None)
+        .start(session_id, action_tx, SessionClock::new(), None)
         .await
         .unwrap();
 
@@ -298,7 +298,7 @@ async fn e2e_empty_session() {
         .await
         .unwrap();
     action_track
-        .start(action_tx, SessionClock::new(), None)
+        .start(Uuid::new_v4(), action_tx, SessionClock::new(), None)
         .await
         .unwrap();
 

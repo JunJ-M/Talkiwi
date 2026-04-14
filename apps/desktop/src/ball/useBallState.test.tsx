@@ -142,4 +142,32 @@ describe("useBallState", () => {
       expect(result.current.requestState).toBe("idle");
     });
   });
+
+  it("keeps the widget idle and exposes the start error when recording cannot begin", async () => {
+    mockSessionGetState.mockResolvedValue("idle");
+    mockSessionStart.mockRejectedValue(
+      new Error(
+        "unable to start microphone recording. Grant Talkiwi microphone access in System Settings > Privacy & Security > Microphone, or connect an available input device. Details: failed to build input stream: device unavailable",
+      ),
+    );
+
+    const { result } = renderHook(() => useBallState());
+
+    await waitFor(() => {
+      expect(result.current.state).toBe("idle");
+    });
+
+    act(() => {
+      void result.current.toggle();
+    });
+
+    expect(result.current.state).toBe("idle");
+    expect(result.current.requestState).toBe("starting");
+
+    await waitFor(() => {
+      expect(result.current.requestState).toBe("idle");
+      expect(result.current.state).toBe("idle");
+      expect(result.current.error).toContain("Privacy & Security > Microphone");
+    });
+  });
 });

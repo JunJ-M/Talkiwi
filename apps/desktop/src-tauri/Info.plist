@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Talkiwi needs microphone access to record your voice for transcription and intent analysis.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Talkiwi uses accessibility APIs to capture the text you select so it can be attached to your recording as context.</string>
+    <key>NSScreenCaptureDescription</key>
+    <string>Talkiwi captures screenshots when you trigger the screenshot action so they can be attached to your recording.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Talkiwi observes the focused window and page URL to correlate your voice with the surrounding context.</string>
+</dict>
+</plist>
