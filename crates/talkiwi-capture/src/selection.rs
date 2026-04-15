@@ -50,11 +50,16 @@ impl SelectionCapture {
 
 /// Get the currently selected text via Accessibility API (osascript wrapper).
 ///
-/// Returns None if:
+/// Returns `Some((app_name, window_title, text))` or None if:
 /// - No text is selected
 /// - Accessibility permission is not granted
 /// - The focused element doesn't support text selection
-fn get_selected_text() -> Option<(String, String, String)> {
+///
+/// This helper is exposed so the desktop `trace_toolbar` commands can
+/// synchronously query the focused selection when the user clicks
+/// "Capture Selection" — the passive poll in `SelectionCapture` isn't
+/// the right path for on-demand captures.
+pub fn get_selected_text() -> Option<(String, String, String)> {
     // Use AppleScript to get selection via System Events
     let script = r#"
 tell application "System Events"
@@ -183,6 +188,7 @@ impl ActionCapture for SelectionCapture {
                     },
                     semantic_hint: None,
                     confidence: 1.0,
+                    curation: Default::default(),
                 };
 
                 debug!(chars = char_count, "selection text captured");

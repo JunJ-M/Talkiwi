@@ -8,10 +8,30 @@ export type KnownActionType =
   | "click.link"
   | "file.attach"
   | "window.focus"
-  | "click.mouse";
+  | "click.mouse"
+  | "manual.note";
 
 // Allow plugin-defined action types while preserving known type narrowing
 export type ActionType = KnownActionType | (string & {});
+
+// Trace curation — matches talkiwi-core::event::TraceCuration
+export type TraceSource = "passive" | "toolbar" | "manual";
+export type TraceRole = "issue" | "target" | "expected" | "reference";
+
+export interface TraceCuration {
+  source: TraceSource;
+  role?: TraceRole | null;
+  user_note?: string | null;
+  deleted?: boolean;
+}
+
+// Permission modules surfaced by permissions_check
+export type TracePermissionModule =
+  | "accessibility"
+  | "screen_recording"
+  | "microphone";
+
+export type TracePermissionMatrix = Record<TracePermissionModule, boolean>;
 
 export type ClipboardContentType = "text" | "image" | "file";
 
@@ -97,6 +117,8 @@ interface BaseActionEvent<TActionType extends ActionType, TPayload> {
   payload: TPayload;
   semantic_hint: string | null;
   confidence: number;
+  /** Curation metadata — added 2026-04-16. Old snapshots may omit it. */
+  curation?: TraceCuration;
 }
 
 export type KnownActionEvent =
@@ -269,6 +291,9 @@ export interface WidgetActionPin {
   t: number;
   type: string;
   count?: number | null;
+  /** Mirrors `ActionEvent.curation.source` so pins can be styled distinctly.
+   * Defaults to "passive" when the backend omits the field. */
+  source?: TraceSource;
 }
 
 export interface WidgetTranscriptState {

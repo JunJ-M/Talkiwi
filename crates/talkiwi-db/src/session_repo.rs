@@ -136,9 +136,11 @@ impl<'a> SessionRepo<'a> {
         for evt in events {
             let payload_json = serde_json::to_string(&evt.payload)
                 .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
+            let curation_json = serde_json::to_string(&evt.curation)
+                .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
 
             tx.execute(
-                "INSERT INTO action_events (id, session_id, timestamp, session_offset_ms, observed_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO action_events (id, session_id, timestamp, session_offset_ms, observed_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence, curation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     evt.id.to_string(),
                     session_id_str,
@@ -151,6 +153,7 @@ impl<'a> SessionRepo<'a> {
                     payload_json,
                     evt.semantic_hint,
                     evt.confidence,
+                    curation_json,
                 ],
             ).map_err(map_err)?;
         }
@@ -291,7 +294,7 @@ impl<'a> SessionRepo<'a> {
 
         // 4. ActionEvents
         let mut evt_stmt = self.conn.prepare(
-            "SELECT id, session_id, timestamp, session_offset_ms, observed_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence FROM action_events WHERE session_id = ?1 ORDER BY session_offset_ms"
+            "SELECT id, session_id, timestamp, session_offset_ms, observed_offset_ms, duration_ms, action_type, plugin_id, payload, semantic_hint, confidence, curation FROM action_events WHERE session_id = ?1 ORDER BY session_offset_ms"
         ).map_err(map_err)?;
         let events: Vec<ActionEvent> = evt_stmt
             .query_map(params![session_id], |row| {
@@ -299,6 +302,13 @@ impl<'a> SessionRepo<'a> {
                 let payload: ActionPayload =
                     parse_json_column(&payload_str, "action_events.payload")?;
                 let action_type_str: String = row.get(6)?;
+
+                // `curation` is an additive column. Rows written before
+                // migration 002 have the `DEFAULT '{}'` value, which
+                // deserializes into `TraceCuration::default()`.
+                let curation_str: String = row.get(11)?;
+                let curation: talkiwi_core::event::TraceCuration =
+                    parse_json_column(&curation_str, "action_events.curation")?;
 
                 Ok(ActionEvent {
                     id: parse_uuid(&row.get::<_, String>(0)?)?,
@@ -312,6 +322,7 @@ impl<'a> SessionRepo<'a> {
                     payload,
                     semantic_hint: row.get(9)?,
                     confidence: row.get(10)?,
+                    curation,
                 })
             })
             .map_err(map_err)?
@@ -697,6 +708,7 @@ mod tests {
             },
             semantic_hint: Some("selected code".to_string()),
             confidence: 1.0,
+            curation: Default::default(),
         }];
 
         let output = IntentOutput {
@@ -817,6 +829,39 @@ mod tests {
         assert!((r.confidence - 0.9).abs() < 0.01);
         assert_eq!(r.strategy, ReferenceStrategy::TemporalProximity);
         assert!(!r.user_confirmed);
+    }
+
+    #[test]
+    fn curation_round_trips_through_db() {
+        use talkiwi_core::event::{TraceCuration, TraceRole, TraceSource};
+
+        let conn = setup();
+        let repo = SessionRepo::new(&conn);
+        let (mut session, mut output, segments, mut events) = make_test_session();
+        session.id = Uuid::new_v4();
+        output.session_id = session.id;
+        for evt in &mut events {
+            evt.session_id = session.id;
+            evt.curation = TraceCuration {
+                source: TraceSource::Toolbar,
+                role: Some(TraceRole::Issue),
+                user_note: Some("ring any bell?".to_string()),
+                deleted: false,
+            };
+        }
+
+        repo.save_session(&session, &output, &segments, &events)
+            .unwrap();
+
+        let detail = repo.get_session_detail(&session.id.to_string()).unwrap();
+        assert_eq!(detail.events.len(), 1);
+        assert_eq!(detail.events[0].curation.source, TraceSource::Toolbar);
+        assert_eq!(detail.events[0].curation.role, Some(TraceRole::Issue));
+        assert_eq!(
+            detail.events[0].curation.user_note.as_deref(),
+            Some("ring any bell?"),
+        );
+        assert!(!detail.events[0].curation.deleted);
     }
 
     #[test]

@@ -297,6 +297,11 @@ pub fn run() {
             commands::permissions::permissions_check,
             commands::permissions::permissions_request,
             commands::model::model_status,
+            commands::trace::capture_selection_text,
+            commands::trace::capture_page_context,
+            commands::trace::capture_manual_note,
+            commands::trace::capture_screenshot_region,
+            commands::trace::widget_trace_delete_event,
         ])
         .build(tauri::generate_context!())
         .expect("Failed to build Talkiwi")

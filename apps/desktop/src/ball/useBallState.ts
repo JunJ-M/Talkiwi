@@ -26,10 +26,8 @@ type ToggleRequestState = "idle" | "starting" | "stopping";
 type MockPreviewMode = BallState | "restricted";
 
 const PANEL_WIDTH = 384;
-const IDLE_HEIGHT = 360;
-const RECORDING_HEIGHT = 780;
-const PROCESSING_HEIGHT = 720;
-const READY_HEIGHT = 820;
+const PANEL_HEIGHT = 560;
+const ERROR_HEIGHT = 620;
 
 const MOCK_INPUTS: AudioInputInfo[] = [
   {
@@ -63,30 +61,14 @@ function normalizeState(payload: SessionState): BallState {
 }
 
 function currentPanelHeight(
-  state: BallState,
-  requestState: ToggleRequestState,
+  _state: BallState,
+  _requestState: ToggleRequestState,
   hasError: boolean,
 ): number {
-  // When an error is surfaced, keep the panel tall enough to show the
-  // banner plus any partial content below. Otherwise the window collapses
-  // to IDLE_HEIGHT and the canvas looks empty right after a failed stop.
   if (hasError) {
-    return READY_HEIGHT;
+    return ERROR_HEIGHT;
   }
-
-  if (requestState !== "idle" || state === "processing") {
-    return PROCESSING_HEIGHT;
-  }
-
-  if (state === "recording") {
-    return RECORDING_HEIGHT;
-  }
-
-  if (state === "ready") {
-    return READY_HEIGHT;
-  }
-
-  return IDLE_HEIGHT;
+  return PANEL_HEIGHT;
 }
 
 async function syncBallWindow(
@@ -177,18 +159,27 @@ function buildMockSnapshot(mode: MockPreviewMode): WidgetSnapshot {
             t: elapsedMs - 9_100,
             type: "selection.text",
             count: 1,
+            source: "toolbar",
           },
           {
             id: "focus-1",
             t: elapsedMs - 5_200,
             type: "window.focus",
             count: 1,
+            source: "passive",
           },
           {
             id: "click-1",
             t: elapsedMs - 1_800,
             type: "click.mouse",
             count: 3,
+            source: "passive",
+          },
+          {
+            id: "note-1",
+            t: elapsedMs - 3_000,
+            type: "manual.note",
+            source: "manual",
           },
         ]
       : [],
@@ -448,6 +439,7 @@ export function useBallState() {
   ]);
 
   const clearError = useCallback(() => setError(null), []);
+  const reportError = useCallback((message: string) => setError(message), []);
 
   const selectMic = useCallback(
     async (idOrName: string) => {
@@ -475,5 +467,6 @@ export function useBallState() {
     requestState,
     error,
     clearError,
+    setError: reportError,
   };
 }

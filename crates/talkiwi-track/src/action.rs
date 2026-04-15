@@ -180,6 +180,7 @@ impl ActionTrack {
                             id: event.id.to_string(),
                             offset_ms: event.session_offset_ms,
                             action_type: event.action_type.as_str().to_string(),
+                            source: event.curation.source,
                         })
                         .await;
 
@@ -254,11 +255,43 @@ impl ActionTrack {
                     id: event.id.to_string(),
                     offset_ms,
                     action_type: event.action_type.as_str().to_string(),
+                    source: event.curation.source,
                 })
                 .await
                 .ok();
         }
         Ok(())
+    }
+
+    /// Soft-delete an event by id. Marks `curation.deleted = true` on the
+    /// stored copy so downstream (timeline summary, assembler) can skip
+    /// it, and emits a `PreviewEvent::ActionRemoved` so the widget pin
+    /// disappears from the active session.
+    ///
+    /// Returns `true` if a matching event was found, `false` otherwise.
+    pub async fn soft_delete_event(&self, event_id: Uuid) -> anyhow::Result<bool> {
+        let mut guard = self.events.lock().await;
+        let mut found = false;
+        for event in guard.iter_mut() {
+            if event.id == event_id {
+                event.curation.deleted = true;
+                found = true;
+                break;
+            }
+        }
+        drop(guard);
+
+        if found {
+            if let Some(preview_tx) = &self.preview_tx {
+                preview_tx
+                    .send(PreviewEvent::ActionRemoved {
+                        id: event_id.to_string(),
+                    })
+                    .await
+                    .ok();
+            }
+        }
+        Ok(found)
     }
 
     /// Get elapsed time since session start in milliseconds.
@@ -432,6 +465,7 @@ mod tests {
             },
             semantic_hint: None,
             confidence: 1.0,
+            curation: Default::default(),
         }
     }
 

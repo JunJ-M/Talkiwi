@@ -246,6 +246,7 @@ mod tests {
             payload,
             semantic_hint: None,
             confidence: 1.0,
+            curation: Default::default(),
         }
     }
 

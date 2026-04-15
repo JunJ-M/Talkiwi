@@ -264,8 +264,8 @@ impl SessionManager {
 
         *self.state.lock().await = SessionState::Ready;
         *self.current_clock.lock().await = None;
-        *self.preview_tx.lock().await = None;
         self.emit_preview_state(SessionState::Ready).await;
+        *self.preview_tx.lock().await = None;
         info!(session_id = %session_id, "session completed successfully");
 
         Ok(output)
@@ -284,6 +284,23 @@ impl SessionManager {
             .await
             .map_err(|e| TalkiwiError::CaptureFailed {
                 module: "inject".into(),
+                reason: e.to_string(),
+            })
+    }
+
+    /// Soft-delete an event from the current session's ActionTrack.
+    ///
+    /// Marks `curation.deleted = true` in-memory so that downstream prompt
+    /// assembly skips it, and emits `PreviewEvent::ActionRemoved` so the
+    /// widget pin disappears from the timeline. The event remains on disk
+    /// after `stop()` for audit; it is simply never fed to the LLM.
+    pub async fn soft_delete_event(&self, event_id: Uuid) -> Result<bool, TalkiwiError> {
+        let action = self.action_track.lock().await;
+        action
+            .soft_delete_event(event_id)
+            .await
+            .map_err(|e| TalkiwiError::CaptureFailed {
+                module: "soft_delete".into(),
                 reason: e.to_string(),
             })
     }
@@ -588,6 +605,7 @@ mod tests {
             },
             semantic_hint: None,
             confidence: 1.0,
+            curation: Default::default(),
         };
 
         sm.inject_event(event.clone()).await.unwrap();
@@ -631,5 +649,51 @@ mod tests {
         let detail = repo.get_session_detail(&session_id.to_string()).unwrap();
         assert_eq!(detail.session.id, session_id);
         assert_eq!(detail.output.task, "Test task");
+    }
+
+    #[tokio::test]
+    async fn stop_emits_ready_preview_state_before_preview_channel_closes() {
+        let sm = make_session_manager();
+        let (speak_tx, _) = mpsc::channel(16);
+        let (action_tx, _) = mpsc::channel(16);
+        let (preview_tx, mut preview_rx) = mpsc::channel(16);
+
+        sm.start(
+            speak_tx,
+            action_tx,
+            Some(preview_tx),
+            SessionClock::new(),
+            Box::new(MockAsrProvider),
+            None,
+            0.0,
+        )
+        .await
+        .unwrap();
+
+        sm.stop().await.unwrap();
+
+        let mut states = Vec::new();
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                preview_rx.recv(),
+            )
+            .await
+            {
+                Ok(Some(PreviewEvent::SessionStateChanged(state))) => states.push(state),
+                Ok(Some(_)) => continue,
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+
+        assert_eq!(
+            states,
+            vec![
+                SessionState::Recording,
+                SessionState::Processing,
+                SessionState::Ready,
+            ]
+        );
     }
 }

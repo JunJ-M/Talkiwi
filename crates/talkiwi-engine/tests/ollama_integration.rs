@@ -104,6 +104,7 @@ async fn ollama_full_engine_pipeline() {
         },
         semantic_hint: None,
         confidence: 1.0,
+        curation: Default::default(),
     }];
 
     let session_id = Uuid::new_v4();

@@ -176,6 +176,7 @@ impl ActionCapture for PageCapture {
                         },
                         semantic_hint: None,
                         confidence: 1.0,
+                        curation: Default::default(),
                     };
 
                     debug!(title = %title, app = %app_name, "window change detected");
@@ -213,6 +214,7 @@ impl ActionCapture for PageCapture {
                                     },
                                     semantic_hint: None,
                                     confidence: 1.0,
+                                    curation: Default::default(),
                                 };
 
                                 debug!(url = %current_url, "URL change detected");
