@@ -179,6 +179,7 @@ fn emit_click(
         },
         semantic_hint: None,
         confidence: 1.0,
+        curation: Default::default(),
     };
 
     debug!(button, x, y, "mouse click captured");

@@ -105,6 +105,7 @@ impl ActionCapture for FocusCapture {
                     },
                     semantic_hint: None,
                     confidence: 1.0,
+                    curation: Default::default(),
                 };
 
                 debug!("window focus captured");

@@ -23,6 +23,16 @@ pub fn run(conn: &Connection) -> anyhow::Result<()> {
         "TEXT NOT NULL DEFAULT 'high'",
     )?;
     ensure_column(conn, "action_events", "observed_offset_ms", "INTEGER")?;
+    // 2026-04-16: trace curation metadata. JSON blob column so future
+    // fields (weight, notes, etc.) don't require another migration.
+    // Old rows default to `{}` which deserializes into
+    // `TraceCuration::default()` via serde(default).
+    ensure_column(
+        conn,
+        "action_events",
+        "curation",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )?;
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS intent_telemetry (

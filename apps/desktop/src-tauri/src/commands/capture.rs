@@ -1,7 +1,7 @@
 use tauri::State;
 use uuid::Uuid;
 
-use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType};
+use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType, TraceCuration};
 
 use crate::AppState;
 
@@ -49,6 +49,7 @@ pub async fn capture_screenshot(state: State<'_, AppState>) -> Result<ActionEven
         },
         semantic_hint: Some("user took a screenshot".to_string()),
         confidence: 1.0,
+        curation: TraceCuration::toolbar(),
     };
 
     // Inject into ActionTrack

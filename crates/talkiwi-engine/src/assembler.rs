@@ -111,7 +111,28 @@ fn assemble_structured(
     md
 }
 
-/// Build artifacts list: referenced events first (in order), unreferenced appended.
+/// Maximum number of *unreferenced* user-sourced events (toolbar / manual)
+/// allowed in the prompt. Prevents an over-enthusiastic user from drowning
+/// their own transcript with low-value captures.
+const TOOLBAR_UNREF_BUDGET: usize = 4;
+
+/// Build artifacts list with two-tier ordering.
+///
+/// The reference resolver's semantics are preserved — referenced events
+/// still come before unreferenced. Within each tier, events that the user
+/// explicitly surfaced via the Trace Toolbar or a manual note float to the
+/// top, so the prompt pipeline sees them first.
+///
+/// Tier A — referenced events:
+///   A1. referenced ∧ curation.source ∈ {Toolbar, Manual}
+///   A2. referenced ∧ curation.source == Passive
+///
+/// Tier B — unreferenced events:
+///   B1. unreferenced ∧ curation.source ∈ {Toolbar, Manual}  (capped)
+///   B2. unreferenced ∧ curation.source == Passive
+///
+/// Events with `curation.deleted == true` are excluded from the list
+/// entirely — the user soft-deleted them from the widget timeline.
 fn build_artifacts(
     events: &[ActionEvent],
     references: &[Reference],
@@ -119,36 +140,79 @@ fn build_artifacts(
 ) -> Vec<ArtifactRef> {
     let mut artifacts: Vec<ArtifactRef> = Vec::new();
     let mut used_event_ids: HashSet<Uuid> = HashSet::new();
-    let mut counter = 1;
+    let mut counter = 1usize;
 
-    // Referenced events first
-    for reference in references {
-        if let Some(event_id) = reference.resolved_event_id {
-            if !used_event_ids.insert(event_id) {
-                continue;
-            }
-            if let Some(event) = events.iter().find(|e| e.id == event_id) {
-                artifacts.push(ArtifactRef {
-                    event_id,
-                    label: format!("context-{}", counter),
-                    inline_summary: summarize_payload(&event.payload, labels),
-                });
-                counter += 1;
+    // Collect referenced event ids in the order the resolver produced them.
+    let referenced_ids: Vec<Uuid> = references
+        .iter()
+        .filter_map(|r| r.resolved_event_id)
+        .collect();
+
+    let is_user_sourced = |event: &ActionEvent| event.curation.is_user_sourced();
+    let is_live = |event: &ActionEvent| !event.curation.deleted;
+
+    let push = |event: &ActionEvent,
+                artifacts: &mut Vec<ArtifactRef>,
+                counter: &mut usize| {
+        artifacts.push(ArtifactRef {
+            event_id: event.id,
+            label: format!("context-{}", *counter),
+            inline_summary: summarize_payload(&event.payload, labels),
+        });
+        *counter += 1;
+    };
+
+    // --- Tier A1: referenced + user-sourced ---
+    for id in &referenced_ids {
+        if used_event_ids.contains(id) {
+            continue;
+        }
+        if let Some(event) = events.iter().find(|e| e.id == *id) {
+            if is_live(event) && is_user_sourced(event) {
+                used_event_ids.insert(*id);
+                push(event, &mut artifacts, &mut counter);
             }
         }
     }
 
-    // Unreferenced events appended
-    for event in events {
-        if !used_event_ids.insert(event.id) {
+    // --- Tier A2: referenced + passive ---
+    for id in &referenced_ids {
+        if used_event_ids.contains(id) {
             continue;
         }
-        artifacts.push(ArtifactRef {
-            event_id: event.id,
-            label: format!("context-{}", counter),
-            inline_summary: summarize_payload(&event.payload, labels),
-        });
-        counter += 1;
+        if let Some(event) = events.iter().find(|e| e.id == *id) {
+            if is_live(event) && !is_user_sourced(event) {
+                used_event_ids.insert(*id);
+                push(event, &mut artifacts, &mut counter);
+            }
+        }
+    }
+
+    // --- Tier B1: unreferenced + user-sourced (capped) ---
+    let mut toolbar_budget = TOOLBAR_UNREF_BUDGET;
+    for event in events {
+        if toolbar_budget == 0 {
+            break;
+        }
+        if used_event_ids.contains(&event.id) {
+            continue;
+        }
+        if is_live(event) && is_user_sourced(event) {
+            used_event_ids.insert(event.id);
+            push(event, &mut artifacts, &mut counter);
+            toolbar_budget -= 1;
+        }
+    }
+
+    // --- Tier B2: unreferenced + passive ---
+    for event in events {
+        if used_event_ids.contains(&event.id) {
+            continue;
+        }
+        if is_live(event) && !is_user_sourced(event) {
+            used_event_ids.insert(event.id);
+            push(event, &mut artifacts, &mut counter);
+        }
     }
 
     artifacts
@@ -362,6 +426,7 @@ mod tests {
             payload,
             semantic_hint: None,
             confidence: 1.0,
+            curation: Default::default(),
         }
     }
 
@@ -601,5 +666,127 @@ mod tests {
         assert_eq!(output.constraints, vec!["no breaking changes"]);
         assert_eq!(output.missing_context, vec!["stack trace"]);
         assert_eq!(output.restructured_speech, "帮我调试这个问题");
+    }
+
+    // ── Two-tier curation sort tests ───────────────────────────────────
+
+    fn make_event_sourced(source: talkiwi_core::event::TraceSource) -> ActionEvent {
+        let mut event = make_event_with_id(
+            Uuid::new_v4(),
+            ActionType::SelectionText,
+            ActionPayload::SelectionText {
+                text: "snippet".to_string(),
+                app_name: "App".to_string(),
+                window_title: "Win".to_string(),
+                char_count: 7,
+            },
+        );
+        event.curation = talkiwi_core::event::TraceCuration {
+            source,
+            ..Default::default()
+        };
+        event
+    }
+
+    #[test]
+    fn toolbar_events_float_above_passive_within_referenced_tier() {
+        use talkiwi_core::event::TraceSource;
+
+        let passive_ref = make_event_sourced(TraceSource::Passive);
+        let toolbar_ref = make_event_sourced(TraceSource::Toolbar);
+        let events = vec![passive_ref.clone(), toolbar_ref.clone()];
+        // Resolver hits passive first (order matches original event order).
+        let refs = vec![
+            make_reference("A", passive_ref.id, 0),
+            make_reference("B", toolbar_ref.id, 1),
+        ];
+
+        let output = assemble(
+            &make_raw("任务", vec![], vec![]),
+            &events,
+            &refs,
+            Uuid::new_v4(),
+            &labels(),
+        );
+
+        // Within the referenced tier, toolbar jumps ahead of passive.
+        assert_eq!(output.artifacts.len(), 2);
+        assert_eq!(output.artifacts[0].event_id, toolbar_ref.id);
+        assert_eq!(output.artifacts[1].event_id, passive_ref.id);
+    }
+
+    #[test]
+    fn referenced_tier_always_beats_unreferenced_tier() {
+        use talkiwi_core::event::TraceSource;
+
+        // Toolbar event is *not* referenced. Passive event IS referenced.
+        // The referenced-passive event must still outrank the
+        // unreferenced-toolbar event — we never let a toolbar capture
+        // unseat the reference-resolver's semantic anchor.
+        let passive_ref = make_event_sourced(TraceSource::Passive);
+        let toolbar_unref = make_event_sourced(TraceSource::Toolbar);
+        let events = vec![toolbar_unref.clone(), passive_ref.clone()];
+        let refs = vec![make_reference("A", passive_ref.id, 1)];
+
+        let output = assemble(
+            &make_raw("任务", vec![], vec![]),
+            &events,
+            &refs,
+            Uuid::new_v4(),
+            &labels(),
+        );
+
+        assert_eq!(output.artifacts.len(), 2);
+        assert_eq!(output.artifacts[0].event_id, passive_ref.id);
+        assert_eq!(output.artifacts[1].event_id, toolbar_unref.id);
+    }
+
+    #[test]
+    fn unreferenced_toolbar_events_are_capped_by_budget() {
+        use talkiwi_core::event::TraceSource;
+
+        // 6 toolbar events, none referenced. Only 4 should make it in.
+        let toolbar_events: Vec<ActionEvent> = (0..6)
+            .map(|_| make_event_sourced(TraceSource::Toolbar))
+            .collect();
+
+        let output = assemble(
+            &make_raw("任务", vec![], vec![]),
+            &toolbar_events,
+            &[],
+            Uuid::new_v4(),
+            &labels(),
+        );
+
+        // 4 toolbar events capped + 0 passive = 4 total. The 2 overflow
+        // toolbar events are dropped entirely (not demoted to the passive
+        // tier, because they *are* user-sourced — we only want user
+        // signal to dominate, not flood).
+        assert_eq!(output.artifacts.len(), 4);
+    }
+
+    #[test]
+    fn deleted_events_are_excluded_from_artifacts() {
+        use talkiwi_core::event::{TraceCuration, TraceSource};
+
+        let mut deleted = make_event_sourced(TraceSource::Toolbar);
+        deleted.curation = TraceCuration {
+            source: TraceSource::Toolbar,
+            deleted: true,
+            ..Default::default()
+        };
+        let live = make_event_sourced(TraceSource::Passive);
+
+        let output = assemble(
+            &make_raw("任务", vec![], vec![]),
+            &[deleted.clone(), live.clone()],
+            &[make_reference("X", deleted.id, 0)],
+            Uuid::new_v4(),
+            &labels(),
+        );
+
+        // Deleted event excluded even though it was referenced.
+        assert_eq!(output.artifacts.len(), 1);
+        assert_eq!(output.artifacts[0].event_id, live.id);
     }
 }

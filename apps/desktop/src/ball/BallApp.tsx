@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { showSettings } from "../services/window";
+import { widgetTraceDeleteEvent } from "../services/trace";
 import type {
   SpeakSegment,
   WidgetActionPin,
@@ -11,7 +12,9 @@ import {
   getTimelineWindow,
   type TimelineWindow,
 } from "./timelineGeometry";
+import { TraceToolbar } from "./TraceToolbar";
 import { useBallState } from "./useBallState";
+import { useTracePermissions } from "./useTracePermissions";
 import "./ball.css";
 
 type BallState = "idle" | "recording" | "processing" | "ready";
@@ -26,6 +29,7 @@ const ACTION_TYPE_ICON: Record<string, string> = {
   "file.attach": "attach_file",
   "window.focus": "open_in_new",
   "click.mouse": "mouse",
+  "manual.note": "push_pin",
 };
 
 const ACTION_TYPE_VARIANT: Record<string, string> = {
@@ -37,6 +41,7 @@ const ACTION_TYPE_VARIANT: Record<string, string> = {
   "page.current": "primary",
   "click.link": "primary",
   "file.attach": "primary",
+  "manual.note": "primary",
 };
 
 // Visually distinct small heights used for the SPEAK mini-waveform.
@@ -49,13 +54,6 @@ function formatElapsed(ms: number): { min: string; sec: string } {
     min: String(Math.floor(total / 60)).padStart(2, "0"),
     sec: String(total % 60).padStart(2, "0"),
   };
-}
-
-function formatTimeNow(): string {
-  const d = new Date();
-  const h = d.getHours();
-  const m = String(d.getMinutes()).padStart(2, "0");
-  return `${h % 12 || 12}:${m} ${h >= 12 ? "PM" : "AM"}`;
 }
 
 function truncate(text: string, max: number): string {
@@ -88,7 +86,9 @@ function buildRecordClass(
   requestState: ToggleRequestState,
 ): string {
   const base = "widget-record-btn";
-  if (requestState !== "idle" || state === "processing") {
+  const isVisualStarting =
+    requestState === "starting" && state !== "recording";
+  if (isVisualStarting || requestState === "stopping" || state === "processing") {
     return `${base} widget-record-btn--processing`;
   }
   if (state === "recording") {
@@ -101,7 +101,7 @@ function recordLabel(
   state: BallState,
   requestState: ToggleRequestState,
 ): string {
-  if (requestState === "starting") return "Starting…";
+  if (requestState === "starting" && state !== "recording") return "Starting…";
   if (requestState === "stopping") return "Finishing…";
   if (state === "recording") return "Recording";
   if (state === "processing") return "Processing";
@@ -290,9 +290,10 @@ function SpeakTrack({
 interface ActionTrackProps {
   pins: WidgetActionPin[];
   window: TimelineWindow;
+  onDeletePin?: (pinId: string) => void;
 }
 
-function ActionTrack({ pins, window }: ActionTrackProps) {
+function ActionTrack({ pins, window, onDeletePin }: ActionTrackProps) {
   const visible = pins
     .map((pin) => ({
       pin,
@@ -313,12 +314,30 @@ function ActionTrack({ pins, window }: ActionTrackProps) {
       {visible.map(({ pin, position }) => {
         const icon = ACTION_TYPE_ICON[pin.type] ?? "circle";
         const variant = ACTION_TYPE_VARIANT[pin.type] ?? "primary";
+        const source = pin.source ?? "passive";
+        const isUserSourced = source === "toolbar" || source === "manual";
+        const titleHint = isUserSourced ? " · 右键删除" : "";
         return (
           <div
             key={pin.id}
-            className={`widget-action-icon widget-action-icon--${variant}`}
-            title={`${pin.type}${pin.count ? ` ×${pin.count}` : ""}`}
+            className={[
+              "widget-action-icon",
+              `widget-action-icon--${variant}`,
+              isUserSourced && "widget-action-icon--user",
+              source === "manual" && "widget-action-icon--manual",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            title={`${pin.type}${pin.count ? ` ×${pin.count}` : ""}${titleHint}`}
             style={{ left: `${position.leftPercent}%` }}
+            onContextMenu={(e) => {
+              if (!isUserSourced || !onDeletePin) {
+                return;
+              }
+              e.preventDefault();
+              onDeletePin(pin.id);
+            }}
+            data-pin-source={source}
           >
             <span className="material-symbols-outlined msi--sm">{icon}</span>
           </div>
@@ -328,97 +347,38 @@ function ActionTrack({ pins, window }: ActionTrackProps) {
   );
 }
 
-function CompilationView({
-  partialText,
-  finalSegments,
-  outputMarkdown,
-  state,
-}: {
-  partialText: string | null | undefined;
-  finalSegments: SpeakSegment[];
-  outputMarkdown: string | null;
-  state: BallState;
-}) {
-  if (state === "ready" && outputMarkdown) {
-    const lines = outputMarkdown
-      .split("\n")
-      .filter((l) => l.trim().length > 0)
-      .slice(0, 8);
-    const heading = lines[0]?.startsWith("#")
-      ? lines[0].replace(/^#+\s*/, "")
-      : null;
-    const bodyLines = heading ? lines.slice(1) : lines;
-
-    return (
-      <div className="widget-compilation">
-        <div className="widget-compilation-dots">
-          <div className="widget-compilation-dot" />
-          <div className="widget-compilation-dot" />
-          <div className="widget-compilation-dot" />
-        </div>
-        {heading && (
-          <div className="widget-compilation-comment"># {heading}</div>
-        )}
-        <div className="widget-compilation-body">
-          {bodyLines.map((line, i) => (
-            <div key={i}>
-              <span className="widget-compilation-num">{i + 1}.</span> {line}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+function timelineBadgeLabel(
+  state: BallState,
+  requestState: ToggleRequestState,
+  hasContent: boolean,
+): string {
+  if (requestState === "starting" && state !== "recording") {
+    return "ARMING";
   }
-
-  // During recording — show live transcript
-  const allTexts: string[] = [];
-  for (const seg of finalSegments) {
-    if (seg.text.trim()) allTexts.push(seg.text.trim());
+  if (state === "recording") {
+    return "AUTO-SYNC ACTIVE";
   }
-  if (partialText?.trim()) allTexts.push(partialText.trim());
-
-  if (allTexts.length === 0) {
-    return (
-      <div className="widget-compilation">
-        <div className="widget-compilation-dots">
-          <div className="widget-compilation-dot" />
-          <div className="widget-compilation-dot" />
-          <div className="widget-compilation-dot" />
-        </div>
-        <div className="widget-compilation-empty">
-          Waiting for speech input…
-        </div>
-      </div>
-    );
+  if (state === "processing") {
+    return "PROCESSING";
   }
+  if (hasContent) {
+    return "CAPTURED";
+  }
+  return "EMPTY";
+}
 
-  // Split combined text into sentences for display
-  const combined = allTexts.join(" ");
-  const sentences = combined
-    .split(/(?<=[。.!?!?\n])\s*/)
-    .filter((s) => s.trim().length > 0)
-    .slice(0, 6);
-
-  return (
-    <div className="widget-compilation">
-      <div className="widget-compilation-dots">
-        <div className="widget-compilation-dot" />
-        <div className="widget-compilation-dot" />
-        <div className="widget-compilation-dot" />
-      </div>
-      <div className="widget-compilation-comment">
-        # Live Transcript
-      </div>
-      <div className="widget-compilation-body">
-        {sentences.map((sentence, i) => (
-          <div key={i}>
-            <span className="widget-compilation-num">{i + 1}.</span>{" "}
-            {truncate(sentence, 60)}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function timelineHint(
+  state: BallState,
+  requestState: ToggleRequestState,
+  hasContent: boolean,
+): string | null {
+  if (requestState === "starting" && state !== "recording") {
+    return "Timeline stays at 00:00 until recording is live.";
+  }
+  if (!hasContent) {
+    return "Press Record to start filling this timeline.";
+  }
+  return null;
 }
 
 /* ---------- Main Widget ---------- */
@@ -432,11 +392,16 @@ export function BallApp() {
     requestState,
     error,
     clearError,
+    setError,
   } = useBallState();
 
-  const [copied, setCopied] = useState(false);
+  const isRecording = state === "recording";
+  const permissions = useTracePermissions(isRecording);
 
-  const elapsedMs = snapshot?.elapsed_ms ?? 0;
+  const isAwaitingRecording =
+    requestState === "starting" && state !== "recording";
+  const visibleSnapshot = isAwaitingRecording ? null : snapshot;
+  const elapsedMs = visibleSnapshot?.elapsed_ms ?? 0;
   const timer = formatElapsed(elapsedMs);
 
   // Shared rolling-window geometry for SPEAK, ACTION and the playhead.
@@ -444,50 +409,36 @@ export function BallApp() {
   // the right edge once the 30 s window is fully occupied.
   const timelineWindow = getTimelineWindow(elapsedMs);
 
-  const finalSegments = snapshot?.transcript.final_segments ?? [];
-  const partialText = snapshot?.transcript.partial_text;
-  const actionPins = snapshot?.action_pins ?? [];
-  const audioBins = snapshot?.audio_bins ?? [];
-  const speechBins = snapshot?.speech_bins ?? [];
-  const isRecording = state === "recording";
+  const finalSegments = visibleSnapshot?.transcript.final_segments ?? [];
+  const actionPins = visibleSnapshot?.action_pins ?? [];
+  const audioBins = visibleSnapshot?.audio_bins ?? [];
+  const speechBins = visibleSnapshot?.speech_bins ?? [];
+  const hasTimelineContent =
+    isRecording || finalSegments.length > 0 || actionPins.length > 0;
+  const timelineSectionHint = timelineHint(
+    state,
+    requestState,
+    hasTimelineContent,
+  );
 
-  const showTimeline =
-    state === "recording" ||
-    state === "processing" ||
-    state === "ready" ||
-    finalSegments.length > 0 ||
-    actionPins.length > 0;
-
-  const showCompilation =
-    state === "recording" ||
-    state === "processing" ||
-    state === "ready" ||
-    finalSegments.length > 0 ||
-    (partialText?.trim()?.length ?? 0) > 0;
-
-  const isReady = state === "ready";
-
-  // Get output markdown when ready
-  // In production this comes from the session detail;
-  // for the widget we reconstruct from transcript
-  const outputMarkdown = isReady
-    ? finalSegments.map((s) => s.text).join("\n") || null
-    : null;
-
-  const handleCopy = useCallback(async () => {
-    const content = isReady
-      ? outputMarkdown ?? ""
-      : finalSegments.map((s) => s.text).join("\n");
-    if (!content) return;
-
+  const handleDeletePin = useCallback(async (pinId: string) => {
     try {
-      await navigator.clipboard.writeText(content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await widgetTraceDeleteEvent(pinId);
     } catch (err) {
-      console.error("Failed to copy:", err);
+      console.error("Failed to delete pin:", err);
     }
-  }, [isReady, outputMarkdown, finalSegments]);
+  }, []);
+
+  const handleToolbarError = useCallback(
+    (message: string | null) => {
+      if (message === null) {
+        clearError();
+      } else {
+        setError(message);
+      }
+    },
+    [clearError, setError],
+  );
 
   return (
     <div className="widget-shell">
@@ -561,131 +512,74 @@ export function BallApp() {
         {/* === Scrollable Canvas === */}
         <div className="widget-canvas">
           {/* Timeline Analysis */}
-          {showTimeline && (
-            <section className="widget-section">
-              <div className="widget-section-header">
-                <h3 className="widget-section-title">
-                  <span
-                    className="material-symbols-outlined msi--sm"
-                    style={{ color: "var(--tki-blue-400)" }}
-                  >
-                    analytics
-                  </span>
-                  Timeline Analysis
-                </h3>
-                <span className="widget-section-badge">
-                  {state === "recording" ? "AUTO-SYNC ACTIVE" : "COMPLETED"}
+          <section className="widget-section">
+            <div className="widget-section-header">
+              <h3 className="widget-section-title">
+                <span
+                  className="material-symbols-outlined msi--sm"
+                  style={{ color: "var(--tki-blue-400)" }}
+                >
+                  analytics
                 </span>
+                Timeline Analysis
+              </h3>
+              <span className="widget-section-badge">
+                {timelineBadgeLabel(state, requestState, hasTimelineContent)}
+              </span>
+            </div>
+            <div className="widget-timeline">
+              <div className="widget-timeline-labels">
+                <div className="widget-track-label">SPEAK</div>
+                <div className="widget-track-label">ACTION</div>
               </div>
-              <div className="widget-timeline">
-                <div className="widget-timeline-labels">
-                  <div className="widget-track-label">SPEAK</div>
-                  <div className="widget-track-label">ACTION</div>
-                </div>
-                <div className="widget-timeline-rail">
-                  {isRecording && (
-                    <div
-                      className="widget-playhead"
-                      style={{ left: `${timelineWindow.playheadPercent}%` }}
+              <div className="widget-timeline-rail">
+                {isRecording && (
+                  <div
+                    className="widget-playhead"
+                    style={{ left: `${timelineWindow.playheadPercent}%` }}
+                  />
+                )}
+                <div className="widget-timeline-grid" />
+                <div className="widget-timeline-tracks">
+                  <div className="widget-track">
+                    <SpeakTrack
+                      segments={finalSegments}
+                      audioBins={audioBins}
+                      speechBins={speechBins}
+                      isRecording={isRecording}
+                      window={timelineWindow}
                     />
-                  )}
-                  <div className="widget-timeline-grid" />
-                  <div className="widget-timeline-tracks">
-                    <div className="widget-track">
-                      <SpeakTrack
-                        segments={finalSegments}
-                        audioBins={audioBins}
-                        speechBins={speechBins}
-                        isRecording={isRecording}
-                        window={timelineWindow}
-                      />
-                    </div>
-                    <div className="widget-track">
-                      <ActionTrack pins={actionPins} window={timelineWindow} />
-                    </div>
+                  </div>
+                  <div className="widget-track">
+                    <ActionTrack
+                      pins={actionPins}
+                      window={timelineWindow}
+                      onDeletePin={handleDeletePin}
+                    />
                   </div>
                 </div>
               </div>
-            </section>
-          )}
+            </div>
+            {timelineSectionHint && (
+              <p className="widget-section-caption">{timelineSectionHint}</p>
+            )}
+          </section>
 
-          {/* Live Compilation */}
-          {showCompilation && (
-            <section className="widget-section">
-              <div className="widget-section-header">
-                <h3 className="widget-section-title">
-                  <span
-                    className="material-symbols-outlined msi--sm"
-                    style={{ color: "#dbb4ff" }}
-                  >
-                    terminal
-                  </span>
-                  Live Compilation
-                </h3>
-              </div>
-              <CompilationView
-                partialText={partialText}
-                finalSegments={finalSegments}
-                outputMarkdown={outputMarkdown}
-                state={state}
-              />
-            </section>
-          )}
+          {/* Trace Toolbar — on-demand context capture during recording */}
+          <TraceToolbar
+            isRecording={isRecording}
+            permissions={permissions}
+            onError={handleToolbarError}
+          />
 
           {/* Processing indicator */}
           {state === "processing" && (
             <div className="widget-processing-overlay">
               <div className="widget-processing-spinner" />
-              <span>Analyzing intent…</span>
-            </div>
-          )}
-
-          {/* Idle hint */}
-          {state === "idle" && !showTimeline && !showCompilation && (
-            <div className="widget-idle-hint">
-              <span className="material-symbols-outlined">mic</span>
-              <span>Press Record to begin capturing voice and context</span>
+              <span>Finalizing session…</span>
             </div>
           )}
         </div>
-
-        {/* === Footer === */}
-        <footer className="widget-footer">
-          <button
-            type="button"
-            className="widget-copy-btn"
-            onClick={() => void handleCopy()}
-            disabled={finalSegments.length === 0 && !outputMarkdown}
-          >
-            <span className="material-symbols-outlined">
-              {copied ? "check" : "content_copy"}
-            </span>
-            {copied ? "Copied!" : "Copy Result"}
-          </button>
-          <div className="widget-save-info">
-            {isReady ? (
-              <>
-                <div className="widget-save-status">
-                  <span className="material-symbols-outlined msi--filled">
-                    cloud_done
-                  </span>
-                  <span className="widget-save-label">Saved</span>
-                </div>
-                <span className="widget-save-time">{formatTimeNow()}</span>
-              </>
-            ) : state === "recording" ? (
-              <>
-                <div className="widget-save-status">
-                  <span className="material-symbols-outlined msi--sm">
-                    fiber_manual_record
-                  </span>
-                  <span className="widget-save-label">Live</span>
-                </div>
-                <span className="widget-save-time">{formatTimeNow()}</span>
-              </>
-            ) : null}
-          </div>
-        </footer>
       </aside>
     </div>
   );

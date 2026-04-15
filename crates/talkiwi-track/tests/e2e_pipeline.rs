@@ -125,6 +125,7 @@ impl ActionCapture for MockClipboardCapture {
                 },
                 semantic_hint: Some("code snippet".to_string()),
                 confidence: 1.0,
+                curation: Default::default(),
             };
             let _ = tx.send(event).await;
         });
@@ -193,6 +194,7 @@ async fn e2e_full_pipeline_mock() {
         },
         semantic_hint: None,
         confidence: 1.0,
+        curation: Default::default(),
     };
     action_track.inject_event(file_event).await.unwrap();
 

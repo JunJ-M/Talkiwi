@@ -1,4 +1,4 @@
-use crate::event::ActionEvent;
+use crate::event::{ActionEvent, TraceSource};
 use crate::session::SpeakSegment;
 
 /// A unified timeline entry — either a speech segment or an action event.
@@ -68,10 +68,25 @@ pub fn timeline_to_summary(timeline: &[TimelineEntry]) -> String {
                 speech_lines.push(format!("[{}-{}ms] {}", s.start_ms, s.end_ms, s.text));
             }
             TimelineEntry::Action(a) => {
+                // Soft-deleted events never enter the prompt summary.
+                if a.curation.deleted {
+                    continue;
+                }
                 let summary = format_action_summary(&a.payload);
+                // Prefix user-sourced events so the LLM can identify them
+                // as higher-priority signal than passive captures.
+                //   `★ ` — toolbar-captured
+                //   `✎ ` — manual note
+                //   (none) — passive capture
+                let prefix = match a.curation.source {
+                    TraceSource::Toolbar => "★ ",
+                    TraceSource::Manual => "✎ ",
+                    TraceSource::Passive => "",
+                };
                 event_lines.push(format!(
-                    "[{}] {} @ {}ms — {}",
+                    "[{}] {}{} @ {}ms — {}",
                     event_idx,
+                    prefix,
                     a.action_type.as_str(),
                     a.session_offset_ms,
                     summary,
@@ -273,6 +288,7 @@ mod tests {
             },
             semantic_hint: None,
             confidence: 1.0,
+            curation: Default::default(),
         }
     }
 
@@ -354,5 +370,52 @@ mod tests {
         let timeline = align_timeline(&segments, &[]);
         let summary = timeline_to_summary_bounded(&timeline, 32);
         assert!(summary.contains("第三句"));
+    }
+
+    #[test]
+    fn timeline_summary_prefixes_user_sourced_events() {
+        use crate::event::{TraceCuration, TraceSource};
+
+        let mut toolbar_event = make_event(500, ActionType::Screenshot);
+        toolbar_event.curation = TraceCuration {
+            source: TraceSource::Toolbar,
+            ..Default::default()
+        };
+        let mut manual_event = make_event(1500, ActionType::SelectionText);
+        manual_event.curation = TraceCuration {
+            source: TraceSource::Manual,
+            ..Default::default()
+        };
+        let passive_event = make_event(2500, ActionType::SelectionText);
+
+        let timeline = align_timeline(
+            &[],
+            &[toolbar_event, manual_event, passive_event],
+        );
+        let summary = timeline_to_summary(&timeline);
+
+        assert!(summary.contains("★ screenshot @ 500ms"));
+        assert!(summary.contains("✎ selection.text @ 1500ms"));
+        // Passive event has no prefix before `selection.text`.
+        assert!(summary.contains("] selection.text @ 2500ms"));
+        assert!(!summary.contains("★ selection.text @ 2500ms"));
+    }
+
+    #[test]
+    fn timeline_summary_drops_deleted_events() {
+        use crate::event::{TraceCuration, TraceSource};
+
+        let mut deleted = make_event(500, ActionType::Screenshot);
+        deleted.curation = TraceCuration {
+            source: TraceSource::Toolbar,
+            deleted: true,
+            ..Default::default()
+        };
+        let kept = make_event(1500, ActionType::SelectionText);
+
+        let timeline = align_timeline(&[], &[deleted, kept]);
+        let summary = timeline_to_summary(&timeline);
+        assert!(!summary.contains("screenshot"));
+        assert!(summary.contains("selection.text @ 1500ms"));
     }
 }

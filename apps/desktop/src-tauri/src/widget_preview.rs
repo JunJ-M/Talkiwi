@@ -135,9 +135,11 @@ impl PreviewState {
                 id,
                 offset_ms,
                 action_type,
+                source,
             } => {
                 if let Some(last) = self.action_pins.back_mut() {
                     if last.action_type == action_type
+                        && last.source == source
                         && offset_ms.saturating_sub(last.t) <= ACTION_MERGE_MS
                     {
                         last.count = Some(last.count.unwrap_or(1) + 1);
@@ -150,7 +152,11 @@ impl PreviewState {
                     t: offset_ms,
                     action_type,
                     count: None,
+                    source,
                 });
+            }
+            PreviewEvent::ActionRemoved { id } => {
+                self.action_pins.retain(|pin| pin.id != id);
             }
             PreviewEvent::CaptureHealthUpdated(entries) => {
                 self.capture_status = entries;
@@ -286,16 +292,20 @@ mod tests {
 
     #[test]
     fn preview_state_merges_actions_and_bounds_segments() {
+        use talkiwi_core::event::TraceSource;
+
         let mut state = PreviewState::new(None);
         state.apply(PreviewEvent::ActionOccurred {
             id: "1".to_string(),
             offset_ms: 100,
             action_type: "click.mouse".to_string(),
+            source: TraceSource::Passive,
         }, 100);
         state.apply(PreviewEvent::ActionOccurred {
             id: "2".to_string(),
             offset_ms: 400,
             action_type: "click.mouse".to_string(),
+            source: TraceSource::Passive,
         }, 400);
         state.apply(PreviewEvent::TranscriptFinal(SpeakSegment {
             text: "hello".to_string(),
@@ -309,6 +319,61 @@ mod tests {
         assert_eq!(snapshot.action_pins.len(), 1);
         assert_eq!(snapshot.action_pins[0].count, Some(2));
         assert_eq!(snapshot.transcript.final_segments.len(), 1);
+    }
+
+    #[test]
+    fn preview_state_keeps_user_sourced_pins_separate_from_passive() {
+        use talkiwi_core::event::TraceSource;
+
+        let mut state = PreviewState::new(None);
+        state.apply(
+            PreviewEvent::ActionOccurred {
+                id: "passive-1".to_string(),
+                offset_ms: 100,
+                action_type: "screenshot".to_string(),
+                source: TraceSource::Passive,
+            },
+            100,
+        );
+        state.apply(
+            PreviewEvent::ActionOccurred {
+                id: "toolbar-1".to_string(),
+                offset_ms: 300,
+                action_type: "screenshot".to_string(),
+                source: TraceSource::Toolbar,
+            },
+            300,
+        );
+
+        let snapshot = state.build_snapshot(1_000);
+        assert_eq!(snapshot.action_pins.len(), 2);
+        assert_eq!(snapshot.action_pins[0].source, TraceSource::Passive);
+        assert_eq!(snapshot.action_pins[1].source, TraceSource::Toolbar);
+    }
+
+    #[test]
+    fn preview_state_drops_pin_on_action_removed() {
+        use talkiwi_core::event::TraceSource;
+
+        let mut state = PreviewState::new(None);
+        state.apply(
+            PreviewEvent::ActionOccurred {
+                id: "abc".to_string(),
+                offset_ms: 100,
+                action_type: "manual.note".to_string(),
+                source: TraceSource::Manual,
+            },
+            100,
+        );
+        assert_eq!(state.build_snapshot(500).action_pins.len(), 1);
+
+        state.apply(
+            PreviewEvent::ActionRemoved {
+                id: "abc".to_string(),
+            },
+            500,
+        );
+        assert_eq!(state.build_snapshot(500).action_pins.len(), 0);
     }
 
     #[test]

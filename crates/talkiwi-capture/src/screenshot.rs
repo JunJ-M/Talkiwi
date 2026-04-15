@@ -70,6 +70,7 @@ impl ScreenshotCapture {
             },
             semantic_hint: Some("user took a screenshot".to_string()),
             confidence: 1.0,
+            curation: Default::default(),
         })
     }
 }

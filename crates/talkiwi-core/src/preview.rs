@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::event::TraceSource;
 use crate::session::{SessionState, SpeakSegment};
 use crate::telemetry::CaptureHealthEntry;
 
@@ -22,6 +23,10 @@ pub struct WidgetActionPin {
     pub action_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+    /// Mirrors `ActionEvent.curation.source`. Lets the widget style
+    /// user-captured pins (toolbar/manual) distinctly from passive ones.
+    #[serde(default)]
+    pub source: TraceSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -68,6 +73,13 @@ pub enum PreviewEvent {
         id: String,
         offset_ms: u64,
         action_type: String,
+        source: TraceSource,
+    },
+    /// User soft-deleted an event from the widget timeline. The preview
+    /// pipeline drops the matching pin; the underlying event stays in
+    /// ActionTrack tagged as `curation.deleted = true`.
+    ActionRemoved {
+        id: String,
     },
     CaptureHealthUpdated(Vec<CaptureHealthEntry>),
     Reset,

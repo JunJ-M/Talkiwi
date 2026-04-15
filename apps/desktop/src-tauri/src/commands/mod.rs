@@ -6,3 +6,4 @@ pub mod model;
 pub mod permissions;
 pub mod session;
 pub mod telemetry;
+pub mod trace;

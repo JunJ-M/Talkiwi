@@ -110,6 +110,7 @@ impl ActionCapture for ClipboardCapture {
                     },
                     semantic_hint: None,
                     confidence: 1.0,
+                    curation: Default::default(),
                 };
 
                 debug!(offset_ms, "clipboard change detected");
