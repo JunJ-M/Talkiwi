@@ -2,10 +2,14 @@ use crate::event::{ActionEvent, TraceSource};
 use crate::session::SpeakSegment;
 
 /// A unified timeline entry — either a speech segment or an action event.
+///
+/// `Action` is boxed because `ActionEvent` is ~296 bytes while `Speak`
+/// is ~48 bytes — without indirection every enum instance pays the full
+/// cost, wasting memory on event-heavy timelines.
 #[derive(Debug, Clone)]
 pub enum TimelineEntry {
     Speak(SpeakSegment),
-    Action(ActionEvent),
+    Action(Box<ActionEvent>),
 }
 
 impl TimelineEntry {
@@ -35,7 +39,7 @@ pub fn align_timeline(segments: &[SpeakSegment], events: &[ActionEvent]) -> Vec<
             result.push(TimelineEntry::Speak(sorted_segments[si].clone()));
             si += 1;
         } else {
-            result.push(TimelineEntry::Action(sorted_events[ei].clone()));
+            result.push(TimelineEntry::Action(Box::new(sorted_events[ei].clone())));
             ei += 1;
         }
     }
@@ -46,7 +50,7 @@ pub fn align_timeline(segments: &[SpeakSegment], events: &[ActionEvent]) -> Vec<
     }
 
     while ei < sorted_events.len() {
-        result.push(TimelineEntry::Action(sorted_events[ei].clone()));
+        result.push(TimelineEntry::Action(Box::new(sorted_events[ei].clone())));
         ei += 1;
     }
 

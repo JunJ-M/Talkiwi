@@ -1,0 +1,70 @@
+{
+  "id": "002-coref-composition",
+  "description": "用户同时引用两个事件,LLM 返回 composition 关系",
+  "segments": [
+    {
+      "text": "参考这个链接和这张截图做一个新功能",
+      "start_ms": 10000,
+      "end_ms": 14000,
+      "confidence": 0.95,
+      "is_final": true
+    }
+  ],
+  "events": [
+    {
+      "id": "00000000-0000-0000-0000-000000000201",
+      "session_id": "00000000-0000-0000-0000-000000000002",
+      "timestamp": 1712900000000,
+      "session_offset_ms": 5000,
+      "observed_offset_ms": 5000,
+      "duration_ms": null,
+      "action_type": "click.link",
+      "plugin_id": "builtin",
+      "payload": {
+        "from_url": null,
+        "to_url": "https://rewind.ai",
+        "title": "Rewind — AI-Powered Memory"
+      },
+      "semantic_hint": null,
+      "confidence": 1.0
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000202",
+      "session_id": "00000000-0000-0000-0000-000000000002",
+      "timestamp": 1712900001000,
+      "session_offset_ms": 8000,
+      "observed_offset_ms": 8000,
+      "duration_ms": null,
+      "action_type": "screenshot",
+      "plugin_id": "builtin",
+      "payload": {
+        "image_path": "/tmp/screenshot.png",
+        "width": 1920,
+        "height": 1080,
+        "ocr_text": "Timeline of everything you saw"
+      },
+      "semantic_hint": null,
+      "confidence": 1.0
+    }
+  ],
+  "provider_output": {
+    "task": "参考 Rewind 的时间轴风格和截图做一个新功能",
+    "intent": "generate",
+    "constraints": [
+      "保留时间轴形态"
+    ],
+    "missing_context": [],
+    "restructured_speech": "请参考这个链接和这张截图实现一个新功能",
+    "references": [
+      {
+        "spoken_text": "这个链接和这张截图",
+        "event_index": 0,
+        "reason": "同时指代 Rewind 链接和屏幕截图",
+        "segment_idx": 0,
+        "event_indices": [0, 1],
+        "relation": "composition",
+        "excluded_indices": []
+      }
+    ]
+  }
+}

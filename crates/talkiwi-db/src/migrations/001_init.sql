@@ -78,7 +78,13 @@ CREATE TABLE IF NOT EXISTS intent_telemetry (
     output_confidence REAL NOT NULL DEFAULT 0.0,
     reference_count INTEGER NOT NULL DEFAULT 0,
     low_confidence_refs INTEGER NOT NULL DEFAULT 0,
-    intent_category TEXT NOT NULL DEFAULT 'unknown'
+    intent_category TEXT NOT NULL DEFAULT 'unknown',
+    candidate_set_size_p50 INTEGER NOT NULL DEFAULT 0,
+    candidate_set_size_p95 INTEGER NOT NULL DEFAULT 0,
+    references_by_relation_json TEXT NOT NULL DEFAULT '{}',
+    anchor_propagations INTEGER NOT NULL DEFAULT 0,
+    importance_filtered_events INTEGER NOT NULL DEFAULT 0,
+    retrieval_chunk_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS trace_telemetry (

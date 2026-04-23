@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -33,6 +35,30 @@ pub struct IntentTelemetry {
     pub reference_count: usize,
     pub low_confidence_refs: usize,
     pub intent_category: String,
+
+    // -------- Trace Annotation Engine metrics (2026-04-18) --------
+    /// Median candidate-set size across segments. Gauges how much
+    /// noise the CandidateBuilder filtered from the session.
+    #[serde(default)]
+    pub candidate_set_size_p50: usize,
+    /// 95th-percentile candidate-set size.
+    #[serde(default)]
+    pub candidate_set_size_p95: usize,
+    /// Count of `Reference`s grouped by `relation` (snake_case keys:
+    /// "single", "composition", "contrast", "subtraction").
+    #[serde(default)]
+    pub references_by_relation: HashMap<String, usize>,
+    /// Number of references that gained a UserAnchor target via
+    /// anchor-note propagation.
+    #[serde(default)]
+    pub anchor_propagations: usize,
+    /// Count of events whose importance fell below the prompt
+    /// threshold (they still appear in retrieval chunks).
+    #[serde(default)]
+    pub importance_filtered_events: usize,
+    /// Total number of retrieval chunks produced.
+    #[serde(default)]
+    pub retrieval_chunk_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

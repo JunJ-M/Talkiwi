@@ -2,7 +2,7 @@ use rusqlite::{params, Connection, Error as SqlError};
 use serde::de::DeserializeOwned;
 use talkiwi_core::event::{ActionEvent, ActionPayload, ActionType};
 use talkiwi_core::output::{
-    ArtifactRef, IntentCategory, IntentOutput, Reference, ReferenceStrategy, RiskLevel,
+    ArtifactRef, IntentCategory, IntentOutput, RefRelation, Reference, ReferenceStrategy, RiskLevel,
 };
 use talkiwi_core::session::{Session, SessionState, SessionSummary, SpeakSegment};
 use talkiwi_core::telemetry::{IntentTelemetry, TraceTelemetry};
@@ -92,9 +92,11 @@ impl<'a> SessionRepo<'a> {
             .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
         let artifacts_json = serde_json::to_string(&output.artifacts)
             .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
+        let retrieval_chunks_json = serde_json::to_string(&output.retrieval_chunks)
+            .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
 
         tx.execute(
-            "INSERT INTO intent_outputs (session_id, task, intent, intent_category, constraints, missing_context, restructured_speech, final_markdown, artifacts_json, output_confidence, risk_level) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO intent_outputs (session_id, task, intent, intent_category, constraints, missing_context, restructured_speech, final_markdown, artifacts_json, output_confidence, risk_level, retrieval_chunks_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 session.id.to_string(),
                 output.task,
@@ -107,6 +109,7 @@ impl<'a> SessionRepo<'a> {
                 artifacts_json,
                 output.output_confidence,
                 serialize_risk_level(&output.risk_level),
+                retrieval_chunks_json,
             ],
         ).map_err(map_err)?;
 
@@ -160,8 +163,10 @@ impl<'a> SessionRepo<'a> {
 
         // 5. INSERT references
         for r in &output.references {
+            let targets_json = serde_json::to_string(&r.targets)
+                .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
             tx.execute(
-                "INSERT INTO references_ (session_id, spoken_text, spoken_offset, resolved_event_idx, resolved_event_id, confidence, strategy, user_confirmed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO references_ (session_id, spoken_text, spoken_offset, resolved_event_idx, resolved_event_id, confidence, strategy, user_confirmed, targets_json, relation, segment_idx) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     session.id.to_string(),
                     r.spoken_text,
@@ -171,6 +176,9 @@ impl<'a> SessionRepo<'a> {
                     r.confidence,
                     serialize_strategy(&r.strategy),
                     r.user_confirmed as i32,
+                    targets_json,
+                    serialize_relation(&r.relation),
+                    r.segment_idx.map(|idx| idx as i64),
                 ],
             ).map_err(map_err)?;
         }
@@ -180,9 +188,11 @@ impl<'a> SessionRepo<'a> {
     }
 
     pub fn save_intent_telemetry(&self, telemetry: &IntentTelemetry) -> talkiwi_core::Result<()> {
+        let references_by_relation_json = serde_json::to_string(&telemetry.references_by_relation)
+            .map_err(|e| TalkiwiError::Serialization(e.to_string()))?;
         self.conn
             .execute(
-                "INSERT INTO intent_telemetry (session_id, timestamp, provider_latency_ms, provider_success, retry_count, fallback_used, schema_valid, repair_attempted, output_confidence, reference_count, low_confidence_refs, intent_category) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                "INSERT INTO intent_telemetry (session_id, timestamp, provider_latency_ms, provider_success, retry_count, fallback_used, schema_valid, repair_attempted, output_confidence, reference_count, low_confidence_refs, intent_category, candidate_set_size_p50, candidate_set_size_p95, references_by_relation_json, anchor_propagations, importance_filtered_events, retrieval_chunk_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 params![
                     telemetry.session_id.to_string(),
                     telemetry.timestamp,
@@ -196,6 +206,12 @@ impl<'a> SessionRepo<'a> {
                     telemetry.reference_count as i64,
                     telemetry.low_confidence_refs as i64,
                     telemetry.intent_category,
+                    telemetry.candidate_set_size_p50 as i64,
+                    telemetry.candidate_set_size_p95 as i64,
+                    references_by_relation_json,
+                    telemetry.anchor_propagations as i64,
+                    telemetry.importance_filtered_events as i64,
+                    telemetry.retrieval_chunk_count as i64,
                 ],
             )
             .map_err(map_err)?;
@@ -247,7 +263,7 @@ impl<'a> SessionRepo<'a> {
 
         // 2. IntentOutput
         let output = self.conn.query_row(
-            "SELECT task, intent, intent_category, constraints, missing_context, restructured_speech, final_markdown, artifacts_json, output_confidence, risk_level FROM intent_outputs WHERE session_id = ?1",
+            "SELECT task, intent, intent_category, constraints, missing_context, restructured_speech, final_markdown, artifacts_json, output_confidence, risk_level, retrieval_chunks_json FROM intent_outputs WHERE session_id = ?1",
             params![session_id],
             |row| {
                 let constraints: Vec<String> =
@@ -256,6 +272,8 @@ impl<'a> SessionRepo<'a> {
                     parse_json_column(&row.get::<_, String>(4)?, "intent_outputs.missing_context")?;
                 let artifacts: Vec<ArtifactRef> =
                     parse_json_column(&row.get::<_, String>(7)?, "intent_outputs.artifacts_json")?;
+                let retrieval_chunks: Vec<talkiwi_core::output::RetrievalChunk> =
+                    parse_json_column(&row.get::<_, String>(10)?, "intent_outputs.retrieval_chunks_json")?;
 
                 Ok(IntentOutput {
                     session_id: session.id,
@@ -270,6 +288,7 @@ impl<'a> SessionRepo<'a> {
                     references: vec![], // filled below
                     output_confidence: row.get(8)?,
                     risk_level: parse_risk_level(&row.get::<_, String>(9)?)?,
+                    retrieval_chunks,
                 })
             },
         ).map_err(map_err)?;
@@ -331,11 +350,15 @@ impl<'a> SessionRepo<'a> {
 
         // 5. References
         let mut ref_stmt = self.conn.prepare(
-            "SELECT spoken_text, spoken_offset, resolved_event_idx, resolved_event_id, confidence, strategy, user_confirmed FROM references_ WHERE session_id = ?1 ORDER BY id"
+            "SELECT spoken_text, spoken_offset, resolved_event_idx, resolved_event_id, confidence, strategy, user_confirmed, targets_json, relation, segment_idx FROM references_ WHERE session_id = ?1 ORDER BY id"
         ).map_err(map_err)?;
         let references: Vec<Reference> = ref_stmt
             .query_map(params![session_id], |row| {
                 let event_id_str: Option<String> = row.get(3)?;
+                let targets_json: String = row.get(7)?;
+                let targets: Vec<talkiwi_core::output::RefTarget> =
+                    parse_json_column(&targets_json, "references_.targets_json")?;
+                let segment_idx: Option<i64> = row.get(9)?;
                 Ok(Reference {
                     spoken_text: row.get(0)?,
                     spoken_offset: row.get::<_, i64>(1)? as usize,
@@ -344,6 +367,9 @@ impl<'a> SessionRepo<'a> {
                     confidence: row.get(4)?,
                     strategy: parse_strategy(&row.get::<_, String>(5)?)?,
                     user_confirmed: row.get::<_, i32>(6)? != 0,
+                    targets,
+                    relation: parse_relation(&row.get::<_, String>(8)?),
+                    segment_idx: segment_idx.map(|v| v as usize),
                 })
             })
             .map_err(map_err)?
@@ -464,7 +490,7 @@ impl<'a> SessionRepo<'a> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT session_id, timestamp, provider_latency_ms, provider_success, retry_count, fallback_used, schema_valid, repair_attempted, output_confidence, reference_count, low_confidence_refs, intent_category
+                "SELECT session_id, timestamp, provider_latency_ms, provider_success, retry_count, fallback_used, schema_valid, repair_attempted, output_confidence, reference_count, low_confidence_refs, intent_category, candidate_set_size_p50, candidate_set_size_p95, references_by_relation_json, anchor_propagations, importance_filtered_events, retrieval_chunk_count
                  FROM intent_telemetry
                  ORDER BY id DESC
                  LIMIT ?1",
@@ -473,6 +499,11 @@ impl<'a> SessionRepo<'a> {
 
         let rows = stmt
             .query_map(params![limit as i64], |row| {
+                let relation_json: String = row.get(14)?;
+                let references_by_relation = parse_json_column(
+                    &relation_json,
+                    "intent_telemetry.references_by_relation_json",
+                )?;
                 Ok(IntentTelemetry {
                     session_id: parse_uuid(&row.get::<_, String>(0)?)?,
                     timestamp: row.get(1)?,
@@ -486,6 +517,12 @@ impl<'a> SessionRepo<'a> {
                     reference_count: row.get::<_, i64>(9)? as usize,
                     low_confidence_refs: row.get::<_, i64>(10)? as usize,
                     intent_category: row.get(11)?,
+                    candidate_set_size_p50: row.get::<_, i64>(12)? as usize,
+                    candidate_set_size_p95: row.get::<_, i64>(13)? as usize,
+                    references_by_relation,
+                    anchor_propagations: row.get::<_, i64>(15)? as usize,
+                    importance_filtered_events: row.get::<_, i64>(16)? as usize,
+                    retrieval_chunk_count: row.get::<_, i64>(17)? as usize,
                 })
             })
             .map_err(map_err)?
@@ -563,6 +600,8 @@ fn serialize_strategy(s: &ReferenceStrategy) -> &'static str {
         ReferenceStrategy::TemporalProximity => "temporal_proximity",
         ReferenceStrategy::SemanticSimilarity => "semantic_similarity",
         ReferenceStrategy::UserConfirmed => "user_confirmed",
+        ReferenceStrategy::LlmCoreference => "llm_coreference",
+        ReferenceStrategy::AnchorPropagation => "anchor_propagation",
     }
 }
 
@@ -571,10 +610,35 @@ fn parse_strategy(s: &str) -> std::result::Result<ReferenceStrategy, SqlError> {
         "temporal_proximity" => Ok(ReferenceStrategy::TemporalProximity),
         "semantic_similarity" => Ok(ReferenceStrategy::SemanticSimilarity),
         "user_confirmed" => Ok(ReferenceStrategy::UserConfirmed),
+        "llm_coreference" => Ok(ReferenceStrategy::LlmCoreference),
+        "anchor_propagation" => Ok(ReferenceStrategy::AnchorPropagation),
         other => Err(invalid_data_err(format!(
             "invalid references_.strategy value: {}",
             other
         ))),
+    }
+}
+
+fn serialize_relation(relation: &RefRelation) -> &'static str {
+    match relation {
+        RefRelation::Single => "single",
+        RefRelation::Composition => "composition",
+        RefRelation::Contrast => "contrast",
+        RefRelation::Subtraction => "subtraction",
+        RefRelation::Unknown => "unknown",
+    }
+}
+
+/// Parse `relation` column. Unknown strings degrade to `Single` so
+/// forward-compat LLM responses persisted by a newer client still
+/// rehydrate under an older client instead of erroring out.
+fn parse_relation(raw: &str) -> RefRelation {
+    match raw {
+        "single" => RefRelation::Single,
+        "composition" => RefRelation::Composition,
+        "contrast" => RefRelation::Contrast,
+        "subtraction" => RefRelation::Subtraction,
+        _ => RefRelation::Single,
     }
 }
 
@@ -725,17 +789,17 @@ mod tests {
                 label: "context-1".to_string(),
                 inline_summary: "Selected code in VSCode: fn old_function() {}".to_string(),
             }],
-            references: vec![Reference {
-                spoken_text: "this function".to_string(),
-                spoken_offset: 8,
-                resolved_event_idx: 0,
-                resolved_event_id: Some(event_id),
-                confidence: 0.9,
-                strategy: ReferenceStrategy::TemporalProximity,
-                user_confirmed: false,
-            }],
+            references: vec![Reference::new_single(
+                "this function",
+                8,
+                0,
+                event_id,
+                0.9,
+                ReferenceStrategy::TemporalProximity,
+            )],
             output_confidence: 0.87,
             risk_level: RiskLevel::Low,
+            retrieval_chunks: vec![],
         };
 
         (session, output, segments, events)
@@ -829,6 +893,86 @@ mod tests {
         assert!((r.confidence - 0.9).abs() < 0.01);
         assert_eq!(r.strategy, ReferenceStrategy::TemporalProximity);
         assert!(!r.user_confirmed);
+    }
+
+    #[test]
+    fn annotation_engine_fields_round_trip_through_db() {
+        use talkiwi_core::output::{
+            RefRelation, RefTarget, Reference, ReferenceStrategy, RetrievalChunk, TargetRole,
+        };
+
+        let conn = setup();
+        let repo = SessionRepo::new(&conn);
+        let (mut session, mut output, segments, mut events) = make_test_session();
+        session.id = Uuid::new_v4();
+        output.session_id = session.id;
+        for evt in &mut events {
+            evt.session_id = session.id;
+        }
+
+        // Swap in a multi-target composition reference and a
+        // retrieval chunk so we exercise every annotation column.
+        let extra_event_id = Uuid::new_v4();
+        output.references = vec![Reference {
+            spoken_text: "A 和 B".to_string(),
+            spoken_offset: 0,
+            resolved_event_idx: 0,
+            resolved_event_id: Some(events[0].id),
+            confidence: 0.88,
+            strategy: ReferenceStrategy::LlmCoreference,
+            user_confirmed: false,
+            targets: vec![
+                RefTarget {
+                    event_id: events[0].id,
+                    event_idx: 0,
+                    role: TargetRole::Source,
+                    via_anchor: None,
+                },
+                RefTarget {
+                    event_id: extra_event_id,
+                    event_idx: 1,
+                    role: TargetRole::ExcludedAspect,
+                    via_anchor: Some(events[0].id),
+                },
+            ],
+            relation: RefRelation::Contrast,
+            segment_idx: Some(3),
+        }];
+        output.retrieval_chunks = vec![RetrievalChunk {
+            event_id: events[0].id,
+            session_id: session.id,
+            session_offset_ms: 1_000,
+            action_type: "selection.text".to_string(),
+            text: "At 00:01 Alice selected old_function".to_string(),
+            referenced_by_segments: vec![3],
+            importance: 0.77,
+            tags: vec!["type:selection.text".to_string(), "user_sourced".to_string()],
+        }];
+
+        repo.save_session(&session, &output, &segments, &events)
+            .unwrap();
+
+        let detail = repo.get_session_detail(&session.id.to_string()).unwrap();
+
+        // Retrieval chunk survives the round-trip.
+        assert_eq!(detail.output.retrieval_chunks.len(), 1);
+        let chunk = &detail.output.retrieval_chunks[0];
+        assert_eq!(chunk.event_id, events[0].id);
+        assert_eq!(chunk.referenced_by_segments, vec![3]);
+        assert!((chunk.importance - 0.77).abs() < 1e-4);
+        assert!(chunk.tags.contains(&"user_sourced".to_string()));
+
+        // Multi-target reference survives the round-trip with roles intact.
+        assert_eq!(detail.output.references.len(), 1);
+        let r = &detail.output.references[0];
+        assert_eq!(r.relation, RefRelation::Contrast);
+        assert_eq!(r.segment_idx, Some(3));
+        assert_eq!(r.targets.len(), 2);
+        assert_eq!(r.targets[0].event_id, events[0].id);
+        assert_eq!(r.targets[0].role, TargetRole::Source);
+        assert_eq!(r.targets[1].event_id, extra_event_id);
+        assert_eq!(r.targets[1].role, TargetRole::ExcludedAspect);
+        assert_eq!(r.targets[1].via_anchor, Some(events[0].id));
     }
 
     #[test]
@@ -936,6 +1080,12 @@ mod tests {
             reference_count: 1,
             low_confidence_refs: 0,
             intent_category: "rewrite".to_string(),
+            candidate_set_size_p50: 0,
+            candidate_set_size_p95: 0,
+            references_by_relation: Default::default(),
+            anchor_propagations: 0,
+            importance_filtered_events: 0,
+            retrieval_chunk_count: 0,
         })
         .unwrap();
         repo.save_trace_telemetry(&TraceTelemetry {
@@ -983,6 +1133,12 @@ mod tests {
             reference_count: 1,
             low_confidence_refs: 0,
             intent_category: "rewrite".to_string(),
+            candidate_set_size_p50: 0,
+            candidate_set_size_p95: 0,
+            references_by_relation: Default::default(),
+            anchor_propagations: 0,
+            importance_filtered_events: 0,
+            retrieval_chunk_count: 0,
         })
         .unwrap();
         repo.save_trace_telemetry(&TraceTelemetry {
@@ -1010,6 +1166,56 @@ mod tests {
         assert_eq!(overview.degraded_trace_rate, 1.0);
         assert!(overview.latest_intent.is_some());
         assert!(overview.latest_trace.is_some());
+    }
+
+    #[test]
+    fn annotation_engine_telemetry_round_trips_through_db() {
+        // Regression for the 2026-04-19 review: annotation-engine
+        // fields used to be dropped at the DB boundary (save-side only
+        // wrote the legacy 12 columns; load-side explicitly zeroed the
+        // new fields). Here we save non-default values for every new
+        // field and confirm they survive a round trip.
+        let conn = setup();
+        let repo = SessionRepo::new(&conn);
+        let (session, output, segments, events) = make_test_session();
+
+        repo.save_session(&session, &output, &segments, &events)
+            .unwrap();
+
+        let mut relation_counts = std::collections::HashMap::new();
+        relation_counts.insert("single".to_string(), 3);
+        relation_counts.insert("composition".to_string(), 2);
+
+        let telemetry = IntentTelemetry {
+            session_id: session.id,
+            timestamp: 777,
+            provider_latency_ms: 890,
+            provider_success: true,
+            retry_count: 0,
+            fallback_used: false,
+            schema_valid: true,
+            repair_attempted: false,
+            output_confidence: 0.91,
+            reference_count: 5,
+            low_confidence_refs: 1,
+            intent_category: "rewrite".to_string(),
+            candidate_set_size_p50: 4,
+            candidate_set_size_p95: 9,
+            references_by_relation: relation_counts.clone(),
+            anchor_propagations: 2,
+            importance_filtered_events: 7,
+            retrieval_chunk_count: 12,
+        };
+        repo.save_intent_telemetry(&telemetry).unwrap();
+
+        let overview = repo.quality_overview(10).unwrap();
+        let latest = overview.latest_intent.expect("latest telemetry present");
+        assert_eq!(latest.candidate_set_size_p50, 4);
+        assert_eq!(latest.candidate_set_size_p95, 9);
+        assert_eq!(latest.anchor_propagations, 2);
+        assert_eq!(latest.importance_filtered_events, 7);
+        assert_eq!(latest.retrieval_chunk_count, 12);
+        assert_eq!(latest.references_by_relation, relation_counts);
     }
 
     #[test]

@@ -6,6 +6,29 @@ use talkiwi_core::output::{ArtifactRef, IntentCategory, IntentOutput, Reference,
 use talkiwi_core::traits::intent::IntentRaw;
 use uuid::Uuid;
 
+use crate::importance::{EventScore, DEFAULT_PROMPT_THRESHOLD};
+
+/// Optional inputs that gate how `assemble` filters the prompt surface.
+/// When `importance_scores` is `None`, every live event is eligible for
+/// the artifact list (legacy behavior). When it is `Some`, unreferenced
+/// non-user-sourced events scoring below `prompt_threshold` are dropped
+/// from artifacts / markdown — they continue to appear on the
+/// retrieval surface separately.
+#[derive(Debug, Clone)]
+pub struct AssembleOptions<'a> {
+    pub importance_scores: Option<&'a [EventScore]>,
+    pub prompt_threshold: f32,
+}
+
+impl Default for AssembleOptions<'_> {
+    fn default() -> Self {
+        Self {
+            importance_scores: None,
+            prompt_threshold: DEFAULT_PROMPT_THRESHOLD,
+        }
+    }
+}
+
 /// Assemble the final `IntentOutput` from LLM output, action events, and resolved references.
 ///
 /// Two modes:
@@ -21,10 +44,31 @@ pub fn assemble(
     session_id: Uuid,
     labels: &AssemblerLabels,
 ) -> IntentOutput {
+    assemble_with_options(
+        raw,
+        events,
+        references,
+        session_id,
+        labels,
+        AssembleOptions::default(),
+    )
+}
+
+/// Like [`assemble`] but honors an optional importance filter so low
+/// value passive events drop out of the prompt surface while still
+/// flowing through to the retrieval surface.
+pub fn assemble_with_options(
+    raw: &IntentRaw,
+    events: &[ActionEvent],
+    references: &[Reference],
+    session_id: Uuid,
+    labels: &AssemblerLabels,
+    options: AssembleOptions<'_>,
+) -> IntentOutput {
     let (artifacts, markdown) = if events.is_empty() {
         (Vec::new(), assemble_pure_voice(raw))
     } else {
-        let artifacts = build_artifacts(events, references, labels);
+        let artifacts = build_artifacts(events, references, labels, &options);
         let markdown = assemble_structured(raw, events, &artifacts, labels);
         (artifacts, markdown)
     };
@@ -46,6 +90,7 @@ pub fn assemble(
         final_markdown: markdown,
         artifacts,
         references: references.to_vec(),
+        retrieval_chunks: vec![],
     }
 }
 
@@ -137,16 +182,34 @@ fn build_artifacts(
     events: &[ActionEvent],
     references: &[Reference],
     labels: &AssemblerLabels,
+    options: &AssembleOptions<'_>,
 ) -> Vec<ArtifactRef> {
     let mut artifacts: Vec<ArtifactRef> = Vec::new();
     let mut used_event_ids: HashSet<Uuid> = HashSet::new();
     let mut counter = 1usize;
 
-    // Collect referenced event ids in the order the resolver produced them.
-    let referenced_ids: Vec<Uuid> = references
-        .iter()
-        .filter_map(|r| r.resolved_event_id)
-        .collect();
+    // Collect referenced event ids in the order the resolver produced
+    // them — including *every* target of a multi-target reference, not
+    // just the primary. For `Composition`/`Contrast` this lifts every
+    // referenced event into the artifact tier instead of silently
+    // demoting secondary targets to the unreferenced pile.
+    let mut referenced_ids: Vec<Uuid> = Vec::new();
+    let mut seen: HashSet<Uuid> = HashSet::new();
+    for reference in references {
+        if reference.targets.is_empty() {
+            if let Some(id) = reference.resolved_event_id {
+                if seen.insert(id) {
+                    referenced_ids.push(id);
+                }
+            }
+        } else {
+            for target in &reference.targets {
+                if seen.insert(target.event_id) {
+                    referenced_ids.push(target.event_id);
+                }
+            }
+        }
+    }
 
     let is_user_sourced = |event: &ActionEvent| event.curation.is_user_sourced();
     let is_live = |event: &ActionEvent| !event.curation.deleted;
@@ -205,11 +268,27 @@ fn build_artifacts(
     }
 
     // --- Tier B2: unreferenced + passive ---
+    // When an importance filter is supplied, events scoring below the
+    // threshold drop out of the prompt surface here (tech plan §9.3).
+    // Referenced events and user-sourced events have already been
+    // placed by earlier tiers and are not affected by this filter.
+    let passes_importance = |event: &ActionEvent| -> bool {
+        let Some(scores) = options.importance_scores else {
+            return true;
+        };
+        let Some(score) = scores.iter().find(|s| {
+            events.get(s.event_idx).map(|e| e.id) == Some(event.id)
+        }) else {
+            return true; // score missing = don't over-filter
+        };
+        score.score >= options.prompt_threshold
+    };
+
     for event in events {
         if used_event_ids.contains(&event.id) {
             continue;
         }
-        if is_live(event) && !is_user_sourced(event) {
+        if is_live(event) && !is_user_sourced(event) && passes_importance(event) {
             used_event_ids.insert(event.id);
             push(event, &mut artifacts, &mut counter);
         }
@@ -431,15 +510,14 @@ mod tests {
     }
 
     fn make_reference(spoken_text: &str, event_id: Uuid, event_idx: usize) -> Reference {
-        Reference {
-            spoken_text: spoken_text.to_string(),
-            spoken_offset: 0,
-            resolved_event_idx: event_idx,
-            resolved_event_id: Some(event_id),
-            confidence: 0.9,
-            strategy: ReferenceStrategy::TemporalProximity,
-            user_confirmed: false,
-        }
+        Reference::new_single(
+            spoken_text.to_string(),
+            0,
+            event_idx,
+            event_id,
+            0.9,
+            ReferenceStrategy::TemporalProximity,
+        )
     }
 
     #[test]
@@ -644,6 +722,86 @@ mod tests {
         assert_eq!(output.artifacts[2].label, "context-3");
         // No duplicates
         assert_eq!(output.artifacts.len(), 3);
+    }
+
+    #[test]
+    fn composition_reference_lifts_all_targets_to_referenced_tier() {
+        use talkiwi_core::output::{RefRelation, RefTarget, TargetRole};
+
+        let raw = make_raw("组合", vec![], vec![]);
+        let id_a = Uuid::new_v4();
+        let id_b = Uuid::new_v4();
+        let id_passive = Uuid::new_v4();
+        let events = vec![
+            make_event_with_id(
+                id_a,
+                ActionType::SelectionText,
+                ActionPayload::SelectionText {
+                    text: "a".to_string(),
+                    app_name: "A".to_string(),
+                    window_title: "w".to_string(),
+                    char_count: 1,
+                },
+            ),
+            make_event_with_id(
+                id_b,
+                ActionType::ClickLink,
+                ActionPayload::ClickLink {
+                    from_url: None,
+                    to_url: "https://x/".to_string(),
+                    title: None,
+                },
+            ),
+            make_event_with_id(
+                id_passive,
+                ActionType::Screenshot,
+                ActionPayload::Screenshot {
+                    image_path: "/p.png".to_string(),
+                    width: 1,
+                    height: 1,
+                    ocr_text: None,
+                },
+            ),
+        ];
+        // One Composition reference hitting both id_a and id_b.
+        let composition = Reference {
+            spoken_text: "A 和 B".to_string(),
+            spoken_offset: 0,
+            resolved_event_idx: 0,
+            resolved_event_id: Some(id_a),
+            confidence: 0.9,
+            strategy: ReferenceStrategy::LlmCoreference,
+            user_confirmed: false,
+            targets: vec![
+                RefTarget {
+                    event_id: id_a,
+                    event_idx: 0,
+                    role: TargetRole::Source,
+                    via_anchor: None,
+                },
+                RefTarget {
+                    event_id: id_b,
+                    event_idx: 1,
+                    role: TargetRole::Source,
+                    via_anchor: None,
+                },
+            ],
+            relation: RefRelation::Composition,
+            segment_idx: Some(0),
+        };
+        let output = assemble(&raw, &events, &[composition], Uuid::new_v4(), &labels());
+
+        // Both composition targets land in the referenced tier. The
+        // passive screenshot is appended after.
+        let first_two: std::collections::HashSet<_> = output
+            .artifacts
+            .iter()
+            .take(2)
+            .map(|a| a.event_id)
+            .collect();
+        assert!(first_two.contains(&id_a));
+        assert!(first_two.contains(&id_b));
+        assert_eq!(output.artifacts[2].event_id, id_passive);
     }
 
     #[test]

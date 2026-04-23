@@ -30,9 +30,8 @@ pub struct AssemblerLabels {
     pub attachment_summary: String,
     pub custom_event_summary: String,
 }
-
 /// Locale configuration for the engine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LocaleConfig {
     pub assembler: AssemblerLabels,
 }
@@ -64,14 +63,6 @@ impl Default for AssemblerLabels {
             navigate_to_summary: "导航到: {url}".to_string(),
             attachment_summary: "附件: {name}".to_string(),
             custom_event_summary: "自定义事件".to_string(),
-        }
-    }
-}
-
-impl Default for LocaleConfig {
-    fn default() -> Self {
-        Self {
-            assembler: AssemblerLabels::default(),
         }
     }
 }

@@ -107,6 +107,22 @@ describe("useBallState", () => {
     expect(mockSetSize).toHaveBeenCalled();
   });
 
+  it("opens the editor only after the complete session detail event is available", async () => {
+    renderHook(() => useBallState());
+
+    await waitFor(() => {
+      expect(mockListen).toHaveBeenCalledWith(
+        "talkiwi://session-complete",
+        expect.any(Function),
+      );
+    });
+
+    expect(mockListen).not.toHaveBeenCalledWith(
+      "talkiwi://output-ready",
+      expect.any(Function),
+    );
+  });
+
   it("ignores repeated toggle clicks while start is already in flight", async () => {
     mockSessionGetState
       .mockResolvedValueOnce("idle")

@@ -514,15 +514,16 @@ html, body, #ball-root {
 }
 
 .widget-live-spectrum--ghost {
-  opacity: 0.72;
+  opacity: 1;
 }
 
 .widget-live-spectrum--ghost .widget-live-bar {
-  background: rgba(96, 165, 250, 0.14);
+  min-height: 7px;
+  background: rgba(96, 165, 250, 0.36);
 }
 
 .widget-live-spectrum--ghost .widget-live-bar--speech {
-  background: rgba(168, 85, 247, 0.2);
+  background: rgba(168, 85, 247, 0.48);
   box-shadow: none;
 }
 
@@ -648,20 +649,20 @@ html, body, #ball-root {
 }
 
 .widget-action-icon--tertiary {
-  background: rgba(134, 56, 0, 0.3);
-  border: 1px solid rgba(153, 65, 0, 0.3);
-  color: #ff955a;
+  background: #5f2d12;
+  border: 1px solid #994100;
+  color: #ffb17a;
 }
 
 .widget-action-icon--secondary {
-  background: rgba(116, 14, 194, 0.3);
-  border: 1px solid rgba(129, 38, 207, 0.3);
+  background: #52128f;
+  border: 1px solid #8126cf;
   color: #dbb4ff;
 }
 
 .widget-action-icon--primary {
-  background: rgba(0, 76, 164, 0.3);
-  border: 1px solid rgba(0, 88, 187, 0.3);
+  background: #003f85;
+  border: 1px solid #0058bb;
   color: var(--tki-primary-fixed);
 }
 

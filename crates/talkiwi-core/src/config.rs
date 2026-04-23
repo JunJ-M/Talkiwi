@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(deserialized.asr.language, Some("zh".to_string()));
         assert_eq!(deserialized.asr.beam_size, 5);
         assert!(deserialized.asr.vad_enabled);
-        assert_eq!(deserialized.asr.input_gain_db, 8.0);
+        assert_eq!(deserialized.asr.input_gain_db, 0.0);
         assert_eq!(deserialized.audio.input_device_id, None);
         assert_eq!(deserialized.capture.selection_poll_interval_ms, 200);
         assert_eq!(deserialized.ui.panel_width, 360);
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(config.asr.language, Some("zh".to_string()));
         assert_eq!(config.asr.beam_size, 5);
         assert!(config.asr.condition_on_previous_text);
-        assert_eq!(config.asr.input_gain_db, 8.0);
+        assert_eq!(config.asr.input_gain_db, 0.0);
         assert_eq!(config.audio.input_device_id.as_deref(), Some("built-in"));
         assert!(!config.capture.selection_enabled);
         assert_eq!(config.ui.panel_side, "left");
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(config.intent.ollama_model, "qwen2.5:7b"); // default
         assert_eq!(config.asr.language, Some("zh".to_string()));
         assert_eq!(config.asr.max_segment_ms, 10_000);
-        assert_eq!(config.asr.input_gain_db, 8.0);
+        assert_eq!(config.asr.input_gain_db, 0.0);
         assert_eq!(config.audio.input_device_name, None);
         assert!(config.capture.selection_enabled); // default
         assert_eq!(config.ui.panel_width, 360); // default
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(config.beam_size, 5);
         assert!(config.vad_enabled);
         assert_eq!(config.max_segment_ms, 10_000);
-        assert_eq!(config.input_gain_db, 8.0);
+        assert_eq!(config.input_gain_db, 0.0);
         assert_eq!(config.temperature, 0.0);
     }
 }
