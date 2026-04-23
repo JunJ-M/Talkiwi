@@ -1,0 +1,71 @@
+{
+  "id": "003-coref-contrast",
+  "description": "用户对比两个候选 — 要 A 不要 B,LLM 返回 contrast 关系",
+  "segments": [
+    {
+      "text": "按 Loom 那样的刷新条做,但不要像那个竞品的 thumbnail 预览",
+      "start_ms": 20000,
+      "end_ms": 25000,
+      "confidence": 0.95,
+      "is_final": true
+    }
+  ],
+  "events": [
+    {
+      "id": "00000000-0000-0000-0000-000000000301",
+      "session_id": "00000000-0000-0000-0000-000000000003",
+      "timestamp": 1712900002000,
+      "session_offset_ms": 12000,
+      "observed_offset_ms": 12000,
+      "duration_ms": null,
+      "action_type": "click.link",
+      "plugin_id": "builtin",
+      "payload": {
+        "from_url": null,
+        "to_url": "https://loom.com/product",
+        "title": "Loom replay demo"
+      },
+      "semantic_hint": null,
+      "confidence": 1.0
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000302",
+      "session_id": "00000000-0000-0000-0000-000000000003",
+      "timestamp": 1712900003000,
+      "session_offset_ms": 15000,
+      "observed_offset_ms": 15000,
+      "duration_ms": null,
+      "action_type": "screenshot",
+      "plugin_id": "builtin",
+      "payload": {
+        "image_path": "/tmp/thumbnail.png",
+        "width": 1920,
+        "height": 1080,
+        "ocr_text": "2:34 / 5:12 thumbnail preview"
+      },
+      "semantic_hint": null,
+      "confidence": 1.0
+    }
+  ],
+  "provider_output": {
+    "task": "做一个带评论锚点的刷新条,但不采用 thumbnail 预览",
+    "intent": "generate",
+    "constraints": [
+      "参考 Loom 的锚点样式",
+      "不采用 thumbnail 预览"
+    ],
+    "missing_context": [],
+    "restructured_speech": "做一个带评论锚点的刷新条,不要 thumbnail",
+    "references": [
+      {
+        "spoken_text": "Loom 那样的刷新条",
+        "event_index": 0,
+        "reason": "Loom 产品页作为正向风格参考",
+        "segment_idx": 0,
+        "event_indices": [0],
+        "relation": "contrast",
+        "excluded_indices": [1]
+      }
+    ]
+  }
+}

@@ -81,6 +81,10 @@ function makeBars(seed: number, count: number): number[] {
   return bars;
 }
 
+function hasSignalBins(bins: number[]): boolean {
+  return bins.some((value) => value > 0);
+}
+
 function buildRecordClass(
   state: BallState,
   requestState: ToggleRequestState,
@@ -216,6 +220,7 @@ interface SpeakTrackProps {
   audioBins: number[];
   speechBins: number[];
   isRecording: boolean;
+  showFrozenAudio: boolean;
   window: TimelineWindow;
 }
 
@@ -224,6 +229,7 @@ function SpeakTrack({
   audioBins,
   speechBins,
   isRecording,
+  showFrozenAudio,
   window,
 }: SpeakTrackProps) {
   // While recording, always show the live spectrum so the user sees
@@ -246,8 +252,22 @@ function SpeakTrack({
     (segment) =>
       segment.end_ms > window.startMs && segment.start_ms < window.endMs,
   );
+  const hasAudioSignal = hasSignalBins(audioBins);
+  const shouldShowFrozenSpectrum = showFrozenAudio || hasAudioSignal;
 
   if (visible.length === 0) {
+    if (shouldShowFrozenSpectrum) {
+      return (
+        <div className="widget-track-content">
+          <LiveAudioSpectrum
+            bins={audioBins}
+            speechBins={speechBins}
+            isActive={true}
+          />
+        </div>
+      );
+    }
+
     return (
       <div className="widget-track-content widget-speak-track">
         <div className="widget-track-baseline" />
@@ -413,8 +433,15 @@ export function BallApp() {
   const actionPins = visibleSnapshot?.action_pins ?? [];
   const audioBins = visibleSnapshot?.audio_bins ?? [];
   const speechBins = visibleSnapshot?.speech_bins ?? [];
+  const hasAudioSignal = hasSignalBins(audioBins);
+  const hasFrozenAudioTrack =
+    !isRecording && elapsedMs > 0 && audioBins.length > 0;
   const hasTimelineContent =
-    isRecording || finalSegments.length > 0 || actionPins.length > 0;
+    isRecording ||
+    hasFrozenAudioTrack ||
+    hasAudioSignal ||
+    finalSegments.length > 0 ||
+    actionPins.length > 0;
   const timelineSectionHint = timelineHint(
     state,
     requestState,
@@ -547,6 +574,7 @@ export function BallApp() {
                       audioBins={audioBins}
                       speechBins={speechBins}
                       isRecording={isRecording}
+                      showFrozenAudio={hasFrozenAudioTrack}
                       window={timelineWindow}
                     />
                   </div>

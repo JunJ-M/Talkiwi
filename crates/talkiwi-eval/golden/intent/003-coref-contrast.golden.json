@@ -1,0 +1,24 @@
+{
+  "task": {
+    "expected": "做一个带评论锚点的刷新条,但不采用 thumbnail 预览",
+    "match_mode": "exact"
+  },
+  "intent": {
+    "expected": "generate",
+    "match_mode": "exact"
+  },
+  "references": [
+    {
+      "spoken_text": "Loom 那样的刷新条",
+      "expected_event_index": 0,
+      "match_mode": "exact",
+      "expected_event_indices": [0, 1],
+      "expected_relation": "contrast"
+    }
+  ],
+  "constraints": {
+    "min_count": 2,
+    "max_count": 4
+  },
+  "output_confidence_min": 0.6
+}

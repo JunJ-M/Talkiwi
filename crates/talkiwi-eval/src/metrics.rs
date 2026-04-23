@@ -8,6 +8,11 @@ pub struct IntentCaseMetrics {
     pub reference_recall: f32,
     pub empty: bool,
     pub output_confidence_pass: bool,
+    /// Fraction of expectations carrying `expected_relation` whose
+    /// `relation` matches. `1.0` when no expectation specifies one
+    /// (legacy fixtures).
+    #[serde(default)]
+    pub relation_accuracy: f32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -19,6 +24,8 @@ pub struct IntentSuiteMetrics {
     pub reference_recall: f32,
     pub empty_rate: f32,
     pub output_confidence_pass_rate: f32,
+    #[serde(default)]
+    pub relation_accuracy: f32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

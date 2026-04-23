@@ -129,11 +129,15 @@ function buildBubbles(segments: SpeakSegment[]) {
   const finals = segments.filter((segment) => segment.is_final);
   const source = finals.length > 0 ? finals : segments;
 
-  return source.slice(0, 4).map((segment, index) => ({
-    id: `${segment.start_ms}-${index}`,
+  return source.map((segment, index) => ({
+    id: `${segment.start_ms}-${segment.end_ms}-${index}`,
     offset: segment.start_ms,
     text: segment.text.trim() || "(empty segment)",
   }));
+}
+
+function getAudioFileName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? "audio.wav";
 }
 
 function actionIcon(event: ActionEvent): JSX.Element {
@@ -282,17 +286,18 @@ function ActionCard({ event }: { event: ActionEvent }) {
 }
 
 export function ReviewPanel() {
-  const { sessionId, editedSegments, editedEvents } = useEditorStore();
+  const { sessionId, audioPath, editedSegments, editedEvents } =
+    useEditorStore();
 
   const bubbles = useMemo(() => buildBubbles(editedSegments), [editedSegments]);
   const actionCards = useMemo(
     () =>
       editedEvents
         .slice()
-        .sort((a, b) => a.session_offset_ms - b.session_offset_ms)
-        .slice(0, 4),
+        .sort((a, b) => a.session_offset_ms - b.session_offset_ms),
     [editedEvents],
   );
+  const audioFallbackName = audioPath ? getAudioFileName(audioPath) : null;
 
   if (!sessionId) {
     return (
@@ -339,9 +344,19 @@ export function ReviewPanel() {
             <div className="review-lane-label">Speak</div>
             <div className="review-card-row review-card-row-speak">
               {bubbles.length === 0 && (
-                <div className="review-empty-inline">
-                  No transcribed speech yet for this session.
-                </div>
+                audioFallbackName ? (
+                  <article className="review-speech-card review-speech-card-audio">
+                    <p className="review-speech-card-text">
+                      <span className="review-speech-card-time">[audio]</span>
+                      Captured audio: {audioFallbackName}. Transcription is not
+                      available for this session.
+                    </p>
+                  </article>
+                ) : (
+                  <div className="review-empty-inline">
+                    No transcribed speech yet for this session.
+                  </div>
+                )
               )}
               {bubbles.map((bubble) => (
                 <article key={bubble.id} className="review-speech-card">

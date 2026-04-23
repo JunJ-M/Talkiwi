@@ -95,4 +95,55 @@ describe("ReviewPanel", () => {
     expect(screen.getByText("captureActiveState()")).toBeInTheDocument();
     expect(screen.getByText("Product spec")).toBeInTheDocument();
   });
+
+  it("renders every speech segment and action instead of truncating at four", () => {
+    useEditorStore.setState({
+      sessionId: "session-1",
+      editedSegments: Array.from({ length: 5 }, (_, index) => ({
+        text: `Segment ${index + 1}`,
+        start_ms: index * 1000,
+        end_ms: index * 1000 + 800,
+        confidence: 0.9,
+        is_final: true,
+      })),
+      editedEvents: Array.from({ length: 6 }, (_, index) => ({
+        id: `evt-${index + 1}`,
+        session_id: "session-1",
+        timestamp: index + 1,
+        session_offset_ms: index * 1000,
+        duration_ms: null,
+        action_type: "selection.text",
+        plugin_id: "builtin",
+        payload: {
+          text: `Action payload ${index + 1}`,
+          app_name: "VSCode",
+          window_title: "editor.tsx",
+          char_count: 20,
+        },
+        semantic_hint: null,
+        confidence: 1,
+      })),
+    });
+
+    render(<ReviewPanel />);
+
+    expect(screen.getByText("Segment 5")).toBeInTheDocument();
+    expect(screen.getByText("Action payload 6")).toBeInTheDocument();
+  });
+
+  it("shows an audio fallback when the session has a recording but no transcript", () => {
+    useEditorStore.setState({
+      sessionId: "session-1",
+      audioPath: "/tmp/talkiwi/sessions/session-1/audio.wav",
+      editedSegments: [],
+      editedEvents: [],
+    });
+
+    render(<ReviewPanel />);
+
+    expect(screen.getByText(/Captured audio: audio\.wav/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText("No transcribed speech yet for this session."),
+    ).not.toBeInTheDocument();
+  });
 });

@@ -147,7 +147,32 @@ export interface ArtifactRef {
 export type ReferenceStrategy =
   | "temporal_proximity"
   | "semantic_similarity"
-  | "user_confirmed";
+  | "user_confirmed"
+  | "llm_coreference"
+  | "anchor_propagation";
+
+export type RefRelation =
+  | "single"
+  | "composition"
+  | "contrast"
+  | "subtraction"
+  | "unknown";
+
+export type TargetRole =
+  | "source"
+  | "style"
+  | "feature"
+  | "excluded_aspect"
+  | "preserve_scope"
+  | "user_anchor"
+  | "unknown";
+
+export interface RefTarget {
+  event_id: string;
+  event_idx: number;
+  role?: TargetRole;
+  via_anchor?: string | null;
+}
 
 export interface Reference {
   spoken_text: string;
@@ -157,6 +182,20 @@ export interface Reference {
   confidence: number;
   strategy: ReferenceStrategy;
   user_confirmed: boolean;
+  /** Present on sessions produced by the trace annotation engine. */
+  targets?: RefTarget[];
+  relation?: RefRelation;
+}
+
+export interface RetrievalChunk {
+  event_id: string;
+  session_id: string;
+  session_offset_ms: number;
+  action_type: string;
+  text: string;
+  referenced_by_segments?: number[];
+  importance: number;
+  tags?: string[];
 }
 
 export interface IntentOutput {
@@ -179,6 +218,8 @@ export interface IntentOutput {
   references: Reference[];
   output_confidence: number;
   risk_level: "low" | "medium" | "high";
+  /** Present on sessions produced by the trace annotation engine. */
+  retrieval_chunks?: RetrievalChunk[];
 }
 
 export interface SessionSummary {

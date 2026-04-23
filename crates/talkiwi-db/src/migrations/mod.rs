@@ -33,6 +33,28 @@ pub fn run(conn: &Connection) -> anyhow::Result<()> {
         "curation",
         "TEXT NOT NULL DEFAULT '{}'",
     )?;
+    // 2026-04-18: trace annotation engine fields. JSON / scalar columns
+    // are additive so v1 sessions rehydrate cleanly (empty arrays /
+    // default enum strings / NULL segment_idx).
+    ensure_column(
+        conn,
+        "intent_outputs",
+        "retrieval_chunks_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_column(
+        conn,
+        "references_",
+        "targets_json",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_column(
+        conn,
+        "references_",
+        "relation",
+        "TEXT NOT NULL DEFAULT 'single'",
+    )?;
+    ensure_column(conn, "references_", "segment_idx", "INTEGER")?;
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS intent_telemetry (
@@ -63,6 +85,45 @@ pub fn run(conn: &Connection) -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_intent_telemetry_session ON intent_telemetry(session_id);
         CREATE INDEX IF NOT EXISTS idx_trace_telemetry_session ON trace_telemetry(session_id);
         "#,
+    )?;
+    // 2026-04-19: annotation-engine telemetry columns. Additive so older
+    // DBs rehydrate cleanly — missing rows deserialize into the
+    // `#[serde(default)]` zero values on the IntentTelemetry struct.
+    ensure_column(
+        conn,
+        "intent_telemetry",
+        "candidate_set_size_p50",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "intent_telemetry",
+        "candidate_set_size_p95",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "intent_telemetry",
+        "references_by_relation_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    ensure_column(
+        conn,
+        "intent_telemetry",
+        "anchor_propagations",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "intent_telemetry",
+        "importance_filtered_events",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "intent_telemetry",
+        "retrieval_chunk_count",
+        "INTEGER NOT NULL DEFAULT 0",
     )?;
     Ok(())
 }

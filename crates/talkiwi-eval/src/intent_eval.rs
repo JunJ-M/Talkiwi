@@ -40,9 +40,22 @@ pub struct StringExpectation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferenceExpectation {
     pub spoken_text: String,
+    /// Primary expected event index. For v1/Single references this is
+    /// the only target; for v2 multi-target references, it is the first
+    /// target and must also appear in `expected_event_indices` if that
+    /// is specified.
     pub expected_event_index: usize,
     #[serde(default)]
     pub match_mode: MatchMode,
+
+    /// v2: multi-target expectation. When set, every listed index must
+    /// appear in the actual reference's `targets` list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_event_indices: Option<Vec<usize>>,
+    /// v2: expected `RefRelation` as a snake_case string, e.g.
+    /// `"single"`, `"composition"`, `"contrast"`, `"subtraction"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_relation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +188,15 @@ pub async fn run_suite(
             .sum::<f32>()
             / total_cases as f32
     };
+    let relation_accuracy = if total_cases == 0 {
+        0.0
+    } else {
+        cases
+            .iter()
+            .map(|case| case.metrics.relation_accuracy)
+            .sum::<f32>()
+            / total_cases as f32
+    };
 
     Ok(IntentSuiteResult {
         cases,
@@ -186,6 +208,7 @@ pub async fn run_suite(
             reference_recall,
             empty_rate: ratio(empty_cases, total_cases),
             output_confidence_pass_rate: ratio(confidence_passes, total_cases),
+            relation_accuracy,
         },
     })
 }
@@ -234,6 +257,8 @@ pub fn evaluate_case(output: &IntentOutput, golden: &IntentGolden) -> IntentCase
     let constraints_ok = constraint_count >= golden.constraints.min_count
         && constraint_count <= golden.constraints.max_count;
 
+    let relation_accuracy = compute_relation_accuracy(&output.references, &golden.references);
+
     IntentCaseMetrics {
         intent_match,
         task_match: task_match && constraints_ok,
@@ -241,6 +266,7 @@ pub fn evaluate_case(output: &IntentOutput, golden: &IntentGolden) -> IntentCase
         reference_recall,
         empty: output.task.trim().is_empty() || output.final_markdown.trim().is_empty(),
         output_confidence_pass: output.output_confidence >= golden.output_confidence_min,
+        relation_accuracy,
     }
 }
 
@@ -287,12 +313,7 @@ fn count_matching_references(actual: &[Reference], expected: &[ReferenceExpectat
     for expectation in expected {
         if let Some((idx, _reference)) = actual.iter().enumerate().find(|(idx, reference)| {
             !used_actual[*idx]
-                && reference.resolved_event_idx == expectation.expected_event_index
-                && matches_string(
-                    &reference.spoken_text,
-                    &expectation.spoken_text,
-                    expectation.match_mode,
-                )
+                && reference_matches_expectation(reference, expectation)
         }) {
             used_actual[idx] = true;
             matches += 1;
@@ -300,6 +321,78 @@ fn count_matching_references(actual: &[Reference], expected: &[ReferenceExpectat
     }
 
     matches
+}
+
+fn reference_matches_expectation(reference: &Reference, expectation: &ReferenceExpectation) -> bool {
+    if !matches_string(
+        &reference.spoken_text,
+        &expectation.spoken_text,
+        expectation.match_mode,
+    ) {
+        return false;
+    }
+
+    if reference.primary_event_idx() != expectation.expected_event_index {
+        return false;
+    }
+
+    if let Some(expected_indices) = &expectation.expected_event_indices {
+        let actual_indices: std::collections::HashSet<usize> = if reference.targets.is_empty() {
+            std::iter::once(reference.primary_event_idx()).collect()
+        } else {
+            reference.targets.iter().map(|t| t.event_idx).collect()
+        };
+        for idx in expected_indices {
+            if !actual_indices.contains(idx) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Count references whose `relation` matches the expectation's
+/// `expected_relation` (case-insensitive snake_case). Only expectations
+/// with `expected_relation` set participate in the ratio.
+fn compute_relation_accuracy(actual: &[Reference], expected: &[ReferenceExpectation]) -> f32 {
+    let with_expected: Vec<&ReferenceExpectation> = expected
+        .iter()
+        .filter(|e| e.expected_relation.is_some())
+        .collect();
+    if with_expected.is_empty() {
+        return 1.0;
+    }
+
+    let mut used_actual = vec![false; actual.len()];
+    let mut correct = 0usize;
+    for expectation in &with_expected {
+        let Some(expected_relation) = expectation.expected_relation.as_ref() else {
+            continue;
+        };
+        if let Some((idx, _)) = actual.iter().enumerate().find(|(idx, reference)| {
+            !used_actual[*idx]
+                && matches_string(
+                    &reference.spoken_text,
+                    &expectation.spoken_text,
+                    expectation.match_mode,
+                )
+        }) {
+            used_actual[idx] = true;
+            let actual_relation = match actual[idx].relation {
+                talkiwi_core::output::RefRelation::Single => "single",
+                talkiwi_core::output::RefRelation::Composition => "composition",
+                talkiwi_core::output::RefRelation::Contrast => "contrast",
+                talkiwi_core::output::RefRelation::Subtraction => "subtraction",
+                talkiwi_core::output::RefRelation::Unknown => "unknown",
+            };
+            if actual_relation.eq_ignore_ascii_case(expected_relation) {
+                correct += 1;
+            }
+        }
+    }
+
+    correct as f32 / with_expected.len() as f32
 }
 
 fn matches_string(actual: &str, expected: &str, mode: MatchMode) -> bool {
@@ -347,13 +440,17 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.metrics.total_cases, 1);
+        // Fixtures: 001 legacy v1, 002 v2 composition, 003 v2 contrast.
+        // `FixtureProvider` is deterministic — every metric should land
+        // at exactly 1.0, leaving room for no silent regressions.
+        assert_eq!(result.metrics.total_cases, 3);
         assert_eq!(result.metrics.intent_accuracy, 1.0);
         assert_eq!(result.metrics.task_accuracy, 1.0);
         assert_eq!(result.metrics.reference_precision, 1.0);
         assert_eq!(result.metrics.reference_recall, 1.0);
         assert_eq!(result.metrics.empty_rate, 0.0);
         assert_eq!(result.metrics.output_confidence_pass_rate, 1.0);
+        assert_eq!(result.metrics.relation_accuracy, 1.0);
         assert_eq!(result.cases[0].output.intent, "rewrite");
     }
 

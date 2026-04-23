@@ -336,7 +336,7 @@ export function useBallState() {
       },
     );
 
-    const unlistenOutput = listen("talkiwi://output-ready", () => {
+    const unlistenSessionComplete = listen("talkiwi://session-complete", () => {
       updateState("ready");
       showEditor();
     });
@@ -351,7 +351,7 @@ export function useBallState() {
     return () => {
       unlistenState.then((fn) => fn());
       unlistenSnapshot.then((fn) => fn());
-      unlistenOutput.then((fn) => fn());
+      unlistenSessionComplete.then((fn) => fn());
       unlistenAsrWarn.then((fn) => fn());
     };
   }, [browserPreviewMock, updateState]);

@@ -3,6 +3,22 @@ use talkiwi_core::event::{ActionEvent, ActionType};
 use talkiwi_core::output::{Reference, ReferenceStrategy};
 use talkiwi_core::session::SpeakSegment;
 
+/// A regex-matched deixis surface in a single `SpeakSegment`. Unlike
+/// `Reference`, hints carry *no* resolved event — they are a prior the
+/// LLM sees alongside the candidate set, indicating "this spoken
+/// phrase smells like one of these event types".
+///
+/// Produced by [`Resolver::boost_hints`] once per non-overlapping regex
+/// match. `expected_types` may be empty for bare "这个/那个" surfaces,
+/// which signal "there is a deixis here" without type preference.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolverHint {
+    pub segment_idx: usize,
+    pub spoken_text: String,
+    pub spoken_offset_in_segment: usize,
+    pub expected_types: Vec<ActionType>,
+}
+
 const CONFIDENCE_HIGH: f32 = 0.9;
 const CONFIDENCE_MEDIUM: f32 = 0.7;
 const CONFIDENCE_LOW: f32 = 0.5;
@@ -61,6 +77,36 @@ impl Resolver {
         Self { patterns }
     }
 
+    /// Emit per-segment deixis hints. Unlike [`Self::resolve`] this does
+    /// not require `events` — it is a pure regex pass over each
+    /// segment's text. Consumed by the trace annotation engine to feed
+    /// the LLM's candidate set as a type prior. See
+    /// `docs/design/2026-04-18-trace-annotation-engine-tech-plan.md` §7.2.
+    pub fn boost_hints(&self, segments: &[SpeakSegment]) -> Vec<ResolverHint> {
+        let mut hints = Vec::new();
+        for (segment_idx, segment) in segments.iter().enumerate() {
+            let mut matched_ranges: Vec<(usize, usize)> = Vec::new();
+            for entry in &self.patterns {
+                for mat in entry.regex.find_iter(&segment.text) {
+                    let overlaps = matched_ranges
+                        .iter()
+                        .any(|(start, end)| mat.start() < *end && mat.end() > *start);
+                    if overlaps {
+                        continue;
+                    }
+                    matched_ranges.push((mat.start(), mat.end()));
+                    hints.push(ResolverHint {
+                        segment_idx,
+                        spoken_text: mat.as_str().to_string(),
+                        spoken_offset_in_segment: mat.start(),
+                        expected_types: entry.expected_types.clone(),
+                    });
+                }
+            }
+        }
+        hints
+    }
+
     pub fn resolve(&self, segments: &[SpeakSegment], events: &[ActionEvent]) -> Vec<Reference> {
         if segments.is_empty() || events.is_empty() {
             return Vec::new();
@@ -98,15 +144,14 @@ impl Resolver {
                 find_best_event(events, speech_time_ms, expected_types, &used_event_indices)
             {
                 used_event_indices[event_idx] = true;
-                references.push(Reference {
+                references.push(Reference::new_single(
                     spoken_text,
                     spoken_offset,
-                    resolved_event_idx: event_idx,
-                    resolved_event_id: Some(events[event_idx].id),
+                    event_idx,
+                    events[event_idx].id,
                     confidence,
-                    strategy: ReferenceStrategy::TemporalProximity,
-                    user_confirmed: false,
-                });
+                    ReferenceStrategy::TemporalProximity,
+                ));
             }
         }
 
@@ -272,5 +317,61 @@ mod tests {
         let refs = resolver.resolve(&segments, &events);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].resolved_event_idx, 0);
+    }
+
+    #[test]
+    fn boost_hints_finds_typed_deixis() {
+        let resolver = Resolver::new();
+        let segments = vec![make_segment("帮我重写这段代码，看这张截图", 0, 1000)];
+        let hints = resolver.boost_hints(&segments);
+        assert_eq!(hints.len(), 2);
+        let surfaces: Vec<_> = hints.iter().map(|h| h.spoken_text.as_str()).collect();
+        assert!(surfaces.contains(&"这段代码"));
+        assert!(surfaces.contains(&"这张截图"));
+        for hint in &hints {
+            assert_eq!(hint.segment_idx, 0);
+        }
+    }
+
+    #[test]
+    fn boost_hints_reports_expected_types_per_pattern() {
+        let resolver = Resolver::new();
+        let segments = vec![make_segment("这段代码", 0, 1000)];
+        let hints = resolver.boost_hints(&segments);
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].expected_types, vec![ActionType::SelectionText]);
+        assert_eq!(hints[0].spoken_offset_in_segment, 0);
+    }
+
+    #[test]
+    fn boost_hints_does_not_overlap_matches() {
+        // The `这个|那个` fallback regex must not also match inside
+        // "这个报错" since the longer pattern covers that range.
+        let resolver = Resolver::new();
+        let segments = vec![make_segment("看这个报错", 0, 1000)];
+        let hints = resolver.boost_hints(&segments);
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].spoken_text, "这个报错");
+    }
+
+    #[test]
+    fn boost_hints_empty_segments_returns_empty() {
+        let resolver = Resolver::new();
+        assert!(resolver.boost_hints(&[]).is_empty());
+    }
+
+    #[test]
+    fn boost_hints_works_without_events() {
+        // Unlike resolve(), boost_hints does not consult events at all —
+        // it is a pure regex pass over segment text.
+        let resolver = Resolver::new();
+        let segments = vec![
+            make_segment("第一段：这个链接", 0, 1_000),
+            make_segment("第二段：这张截图", 2_000, 3_000),
+        ];
+        let hints = resolver.boost_hints(&segments);
+        assert_eq!(hints.len(), 2);
+        assert_eq!(hints[0].segment_idx, 0);
+        assert_eq!(hints[1].segment_idx, 1);
     }
 }

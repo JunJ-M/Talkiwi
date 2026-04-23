@@ -185,6 +185,71 @@ describe("BallApp timeline alignment", () => {
     expect(parseFloat((action as HTMLElement).style.left)).toBeCloseTo(15, 4);
   });
 
+  it("keeps the frozen audio spectrum visible after recording stops without transcript segments", () => {
+    mockUseBallState.mockReturnValue(
+      buildBallStateMock({
+        state: "processing",
+        snapshot: {
+          ...snapshot,
+          session_state: "processing",
+          audio_bins: Array.from({ length: 120 }, (_, index) =>
+            index < 24 ? 0.4 : 0,
+          ),
+          speech_bins: Array.from({ length: 120 }, () => 0),
+          transcript: {
+            partial_text: null,
+            final_segments: [],
+          },
+        },
+      }),
+    );
+
+    const { container } = render(<BallApp />);
+
+    expect(screen.getByText("PROCESSING")).toBeInTheDocument();
+    expect(container.querySelector(".widget-speak-segment")).toBeNull();
+    const spectrum = container.querySelector(".widget-live-spectrum--active");
+    expect(spectrum).toBeTruthy();
+    expect(
+      spectrum?.closest(".widget-track-content")?.querySelector(".widget-track-baseline"),
+    ).toBeNull();
+    expect(
+      container.querySelectorAll(".widget-live-spectrum--active .widget-live-bar"),
+    ).toHaveLength(120);
+  });
+
+  it("keeps a visible speak-track texture for quiet recordings with zero bins", () => {
+    mockUseBallState.mockReturnValue(
+      buildBallStateMock({
+        state: "ready",
+        snapshot: {
+          ...snapshot,
+          elapsed_ms: 12_000,
+          audio_bins: Array.from({ length: 120 }, () => 0),
+          speech_bins: Array.from({ length: 120 }, () => 0),
+          action_pins: [],
+          transcript: {
+            partial_text: null,
+            final_segments: [],
+          },
+        },
+      }),
+    );
+
+    const { container } = render(<BallApp />);
+
+    expect(screen.getByText("CAPTURED")).toBeInTheDocument();
+    expect(container.querySelector(".widget-speak-segment")).toBeNull();
+    const spectrum = container.querySelector(".widget-live-spectrum--active");
+    expect(spectrum).toBeTruthy();
+    expect(
+      spectrum?.closest(".widget-track-content")?.querySelector(".widget-track-baseline"),
+    ).toBeNull();
+    expect(
+      container.querySelectorAll(".widget-live-spectrum--active .widget-live-bar"),
+    ).toHaveLength(120);
+  });
+
   it("removes Live Compilation and keeps the timeline empty while start is pending", () => {
     mockUseBallState.mockReturnValue(
       buildBallStateMock({
